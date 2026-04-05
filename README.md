@@ -1,5 +1,7 @@
 # LokaSense: Geo-Sentiment Small Language Models for Micro-Enterprise Optimization at the Edge
 
+Current maintained workflow: use `training.ipynb` for end-to-end training and `inference.ipynb` for local inference. The standalone Python scripts remain callable, but the notebook workflow is the supported entry point.
+
 **Abstract**
 The deployment of large-scale Natural Language Processing (NLP) models in resource-constrained environments presents significant challenges. LokaSense proposes a novel architectural paradigm utilizing resource-optimized Small Language Models (SLMs) enhanced via Knowledge Distillation, L1 Unstructured Pruning, and 8-bit dynamic quantization to perform real-time, edge-device geo-sentiment and Named Entity Recognition (NER) inference. By aggregating public discourse signals—including unmet demand, saturation, and geographic entities—the system renders data-driven spatial mappings for micro-enterprise (UMKM) viability. Distilling 12-layer architectures into an ultra-lightweight 6-layer framework while pruning 20% of network parameters mapping the operational footprint to less than 60MB, LokaSense yields competitive classification boundaries operating efficiently under minimal CPU requirements.
 

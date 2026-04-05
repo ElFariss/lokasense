@@ -37,6 +37,8 @@ requests
 overpy
 google-generativeai
 python-dotenv
+scrapling[fetchers]>=0.4.3
+playwright>=1.52
 
 # Visualization
 matplotlib

@@ -99,16 +99,16 @@ def query_overpass(overpass_query: str, retries: int = 3) -> dict:
                 return response.json()
             elif response.status_code == 429:
                 wait_time = 30 * (attempt + 1)
-                print(f"  ⚠ Rate limited, waiting {wait_time}s...")
+                print(f"  Rate limited, waiting {wait_time}s...")
                 time.sleep(wait_time)
             else:
-                print(f"  ⚠ HTTP {response.status_code}: {response.text[:200]}")
+                print(f"  HTTP {response.status_code}: {response.text[:200]}")
                 time.sleep(10)
         except requests.exceptions.Timeout:
-            print(f"  ⚠ Timeout on attempt {attempt + 1}")
+            print(f"  Timeout on attempt {attempt + 1}")
             time.sleep(15)
         except Exception as e:
-            print(f"  ⚠ Error: {e}")
+            print(f"  Error: {e}")
             time.sleep(10)
     return {"elements": []}
 

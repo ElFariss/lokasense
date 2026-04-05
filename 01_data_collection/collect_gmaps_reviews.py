@@ -52,10 +52,10 @@ def search_places(query, api_key):
         if r.status_code == 200:
             return r.json().get("places", [])
         else:
-            print(f"  ⚠ Search {r.status_code}: {r.text[:150]}")
+            print(f"  Search {r.status_code}: {r.text[:150]}")
             return []
     except Exception as e:
-        print(f"  ⚠ {e}")
+        print(f"  {e}")
         return []
 
 
@@ -78,7 +78,7 @@ def main():
     print("=" * 70)
 
     if not API_KEY:
-        print("⚠ GOOGLE_MAP not found in .env!")
+        print("GOOGLE_MAP not found in .env.")
         return
 
     all_reviews = []

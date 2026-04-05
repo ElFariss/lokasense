@@ -4,9 +4,15 @@
 Load IndoLEM NER data from TSV and format for HuggingFace Trainer.
 """
 import json
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from common.ner_labels import has_entity, normalize_ner_tags
+
 DATA_DIR = BASE_DIR / "data"
 TRAIN_DIR = BASE_DIR / "train_data"
 TEST_DIR = BASE_DIR / "test_data"
@@ -34,6 +40,8 @@ def parse_tsv(filepath):
                     labels.append(parts[-1])
     if tokens:
         sentences.append({"tokens": tokens, "ner_tags": labels})
+    for sentence in sentences:
+        sentence["ner_tags"] = normalize_ner_tags(sentence["ner_tags"])
     return sentences
 
 
@@ -58,16 +66,27 @@ def main():
     test_all = ugm_test + ui_test[len(ui_test)//2:]
 
     if not train_all:
-        print("  ⚠ No IndoLEM data found! Check data/indolem_ner/")
+        print("  No IndoLEM data found. Check data/indolem_ner/")
         return
 
-    # Also try adding NERP from HuggingFace
-    nerp_dir = DATA_DIR / "huggingface" / "nerp"
-    if (nerp_dir / "train.csv").exists():
-        import pandas as pd
-        nerp_df = pd.read_csv(nerp_dir / "train.csv")
-        # NERP format: tokens column and ner_tags column (as lists)
-        print(f"  Also found NERP: {len(nerp_df)} samples")
+    # Domain adaptation path: append weak NER bootstrap rows built from scraped public text.
+    weak_ner_file = DATA_DIR / "scraped" / "ner_bootstrap.jsonl"
+    weak_ner_count = 0
+    if weak_ner_file.exists():
+        with open(weak_ner_file, "r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                tokens = row.get("tokens", [])
+                ner_tags = normalize_ner_tags(row.get("weak_ner_tags", []))
+                if not tokens or not ner_tags or len(tokens) != len(ner_tags):
+                    continue
+                if not has_entity(ner_tags):
+                    continue
+                train_all.append({"tokens": tokens, "ner_tags": ner_tags})
+                weak_ner_count += 1
+        print(f"  Added scraped weak NER bootstrap: {weak_ner_count} samples")
 
     # Save
     with open(TRAIN_DIR / "ner_train.json", 'w') as f:
@@ -82,7 +101,7 @@ def main():
     for s in train_all + val_all + test_all:
         all_labels.update(s["ner_tags"])
 
-    print(f"\n✅ NER splits created:")
+    print(f"\nNER splits created:")
     print(f"  Train: {len(train_all)} sentences")
     print(f"  Val:   {len(val_all)} sentences")
     print(f"  Test:  {len(test_all)} sentences")

@@ -22,7 +22,7 @@
 ## Data Sources
 - IndoLEM NER-UGM (train/dev/test TSV)
 - IndoLEM NER-UI (train/test TSV)
-- IndoNLU NERP (from HuggingFace)
+- Scraped weak NER bootstrap from `data/scraped/ner_bootstrap.jsonl`
 
 ## Labels
 | Tag | Entity Type |

@@ -76,10 +76,10 @@ def search_places(query: str, api_key: str) -> list:
             data = response.json()
             return data.get("places", [])
         else:
-            print(f"  ⚠ Search error {response.status_code}: {response.text[:200]}")
+            print(f"  Search error {response.status_code}: {response.text[:200]}")
             return []
     except Exception as e:
-        print(f"  ⚠ Search exception: {e}")
+        print(f"  Search exception: {e}")
         return []
 
 
@@ -97,10 +97,10 @@ def get_place_reviews(place_id: str, api_key: str) -> list:
             data = response.json()
             return data.get("reviews", [])
         else:
-            print(f"    ⚠ Details error {response.status_code}: {response.text[:200]}")
+            print(f"    Details error {response.status_code}: {response.text[:200]}")
             return []
     except Exception as e:
-        print(f"    ⚠ Details exception: {e}")
+        print(f"    Details exception: {e}")
         return []
 
 
@@ -111,7 +111,7 @@ def main():
     print("=" * 70)
 
     if not GOOGLE_MAPS_API_KEY:
-        print("\n⚠ GOOGLE_MAPS_API_KEY not found in .env")
+        print("\nGOOGLE_MAPS_API_KEY not found in .env")
         print("  Please add it to your .env file:")
         print("  GOOGLE_MAPS_API_KEY=your_api_key_here")
         print("\n  To get an API key:")
@@ -212,7 +212,7 @@ def _save_checkpoint(reviews, output_dir):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(reviews)
-    print(f"    📌 Checkpoint: {len(reviews)} reviews saved")
+            print(f"    Checkpoint: {len(reviews)} reviews saved")
 
 
 if __name__ == "__main__":

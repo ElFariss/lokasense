@@ -26,7 +26,7 @@ def eda_smsa():
     smsa_dir = DATA_DIR / "huggingface" / "smsa"
     train_f = smsa_dir / "train.csv"
     if not train_f.exists():
-        print("  ⚠ SmSA not downloaded yet")
+        print("  SmSA not downloaded yet")
         return {}
     df = pd.read_csv(train_f)
     stats = {
@@ -46,7 +46,7 @@ def eda_nusax():
     nusax_dir = DATA_DIR / "nusax_sentiment" / "nusax" / "datasets" / "sentiment" / "indonesian"
     files = list(nusax_dir.glob("*.csv"))
     if not files:
-        print("  ⚠ NusaX not found")
+        print("  NusaX not found")
         return {}
     all_texts = []
     for f in files:
@@ -68,7 +68,7 @@ def eda_weak_labels():
     """EDA on weak-labeled data."""
     weak_f = DATA_DIR / "labeled" / "weak_labeled.csv"
     if not weak_f.exists():
-        print("  ⚠ Weak labels not generated yet")
+        print("  Weak labels not generated yet")
         return {}
     df = pd.read_csv(weak_f)
     signal_counts = dict(Counter(df['signal'].tolist()))
@@ -103,7 +103,7 @@ def eda_weak_labels():
     plt.savefig(LOG_DIR / "eda_signal_distribution.png", dpi=150)
     plt.close()
     print(f"  Weak labels: {len(df)} samples, {confidence_stats['high_conf_pct']:.1f}% high confidence")
-    print(f"  📊 Plot saved: logs/eda_signal_distribution.png")
+    print(f"  Plot saved: logs/eda_signal_distribution.png")
     return stats
 
 
@@ -111,7 +111,7 @@ def eda_gmaps():
     """EDA on Google Maps reviews."""
     gmaps_f = DATA_DIR / "social_media" / "gmaps_reviews.csv"
     if not gmaps_f.exists():
-        print("  ⚠ Google Maps reviews not collected yet")
+        print("  Google Maps reviews not collected yet")
         return {}
     df = pd.read_csv(gmaps_f)
     stats = {
@@ -133,23 +133,23 @@ def main():
 
     all_stats = {}
     
-    print("\n📊 SmSA (IndoNLU):")
+    print("\nSmSA (IndoNLU):")
     all_stats["smsa"] = eda_smsa()
     
-    print("\n📊 NusaX Sentiment:")
+    print("\nNusaX Sentiment:")
     all_stats["nusax"] = eda_nusax()
     
-    print("\n📊 Weak-Labeled Data:")
+    print("\nWeak-Labeled Data:")
     all_stats["weak_labels"] = eda_weak_labels()
     
-    print("\n📊 Google Maps Reviews:")
+    print("\nGoogle Maps Reviews:")
     all_stats["gmaps"] = eda_gmaps()
 
     # Save all EDA stats
     eda_file = LOG_DIR / "eda_stats.json"
     with open(eda_file, "w", encoding="utf-8") as f:
         json.dump(all_stats, f, indent=2, ensure_ascii=False, default=str)
-    print(f"\n✅ All EDA stats saved to {eda_file}")
+    print(f"\nAll EDA stats saved to {eda_file}")
 
 
 if __name__ == "__main__":

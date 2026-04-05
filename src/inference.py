@@ -49,9 +49,9 @@ print("Loading Tokenizer and ONNX Model...")
 try:
     tokenizer = AutoTokenizer.from_pretrained(ONNX_DIR)
     ort_model = ORTModelForSequenceClassification.from_pretrained(ONNX_DIR)
-    print("✅ Model loaded successfully from local storage.")
+    print("Model loaded successfully from local storage.")
 except Exception as e:
-    print(f"⚠ Warning: Could not load ONNX model (Run training.ipynb first). Error: {e}")
+    print(f"Warning: Could not load ONNX model (run training.ipynb first). Error: {e}")
     # Mock fallback for demonstration structure
     tokenizer = None
     ort_model = None
@@ -153,7 +153,7 @@ test_texts = [
 ]
 
 print("="*70)
-print(" 🚀 LokaSense Local Inference & Explainability Engine (Track C)")
+print(" LokaSense Local Inference & Explainability Engine (Track C)")
 print("="*70)
 
 for original_text in test_texts:
@@ -163,12 +163,12 @@ for original_text in test_texts:
     # 2. Inference + LIME
     result = analyze_market_signal(safe_text)
     
-    print("\n📝 PII-Filtered Text:", result["text"])
-    print(f"📊 Prediction: {result['predicted_signal']} (Confidence: {result['confidence']:.2f})")
+    print("\nPII-Filtered Text:", result["text"])
+    print(f"Prediction: {result['predicted_signal']} (Confidence: {result['confidence']:.2f})")
     print(f"⚡ Latency: {result['inference_time_sec']}s (CPU Only)")
-    print("🔍 Explainability (Top 3 Features):")
+    print("Explainability (Top 3 Features):")
     for feat in result["top_3_features"]:
         print(f"   - {feat}")
-    print(f"💬 Human Readable: {result['explanation_summary']}")
+    print(f"Human Readable: {result['explanation_summary']}")
 
 # Note: In a UI environment, we would also render result["lime_html"] using IPython.display.HTML

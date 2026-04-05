@@ -9,9 +9,9 @@ import numpy as np
 import pandas as pd
 import torch
 from pathlib import Path
-from sklearn.metrics import classification_report, f1_score
+from sklearn.metrics import f1_score
 from sklearn.utils.class_weight import compute_class_weight
-from datasets import Dataset, Features, Value, ClassLabel
+from datasets import Dataset
 from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification,
     Trainer, TrainingArguments, DataCollatorWithPadding
@@ -24,8 +24,12 @@ LOG_DIR = BASE_DIR / "logs"
 MODEL_OUT = BASE_DIR / "models" / "signal_base"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL_NAME = "cahya/distilbert-base-indonesian"
+MODEL_NAME = "indobenchmark/indobert-base-p1"
 MAX_LENGTH = 128
+TRAIN_BATCH_SIZE = 8
+EVAL_BATCH_SIZE = 4
+GRADIENT_ACCUMULATION_STEPS = 2
+EVAL_ACCUMULATION_STEPS = 8
 SIGNAL_LABELS = ["NEUTRAL", "DEMAND_UNMET", "DEMAND_PRESENT", "SUPPLY_SIGNAL", "COMPETITION_HIGH", "COMPLAINT", "TREND"]
 label2id = {l: i for i, l in enumerate(SIGNAL_LABELS)}
 id2label = {i: l for i, l in enumerate(SIGNAL_LABELS)}
@@ -45,11 +49,22 @@ class WeightedTrainer(Trainer):
 
 
 def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    preds = np.argmax(logits, axis=-1)
-    macro_f1 = f1_score(labels, preds, average="macro", zero_division=0)
-    per_class = f1_score(labels, preds, average=None, zero_division=0)
+    predictions, labels = eval_pred
+    if isinstance(predictions, tuple):
+        predictions = predictions[0]
+    if isinstance(predictions, list):
+        predictions = predictions[0]
+    preds = np.argmax(predictions, axis=-1) if getattr(predictions, "ndim", 1) > 1 else predictions
+    label_range = np.arange(len(SIGNAL_LABELS))
+    macro_f1 = f1_score(labels, preds, labels=label_range, average="macro", zero_division=0)
+    per_class = f1_score(labels, preds, labels=label_range, average=None, zero_division=0)
     return {"macro_f1": macro_f1, **{f"f1_{SIGNAL_LABELS[i]}": float(per_class[i]) for i in range(len(SIGNAL_LABELS))}}
+
+
+def preprocess_logits_for_metrics(logits, labels):
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    return torch.argmax(logits, dim=-1)
 
 
 def main():
@@ -79,32 +94,44 @@ def main():
     val_ds = Dataset.from_pandas(val_df[['text', 'final_signal', 'source']])
 
     def tokenize(examples):
-        return tokenizer(examples["text"], padding="max_length", truncation=True, max_length=MAX_LENGTH)
+        return tokenizer(examples["text"], truncation=True, max_length=MAX_LENGTH)
 
     train_tok = train_ds.map(tokenize, batched=True).rename_column("final_signal", "labels")
     val_tok = val_ds.map(tokenize, batched=True).rename_column("final_signal", "labels")
 
     # Class weights
     labels_arr = train_df['final_signal'].values
-    cw = compute_class_weight('balanced', classes=np.arange(len(SIGNAL_LABELS)), y=labels_arr)
+    present_classes = np.unique(labels_arr)
+    present_weights = compute_class_weight("balanced", classes=present_classes, y=labels_arr)
+    weight_map = {int(label): float(weight) for label, weight in zip(present_classes, present_weights)}
+    cw = np.array([weight_map.get(index, 1.0) for index in range(len(SIGNAL_LABELS))], dtype=np.float32)
     class_weights = torch.tensor(cw, dtype=torch.float)
     print(f"  Class weights: {dict(zip(SIGNAL_LABELS, [f'{w:.2f}' for w in cw]))}")
 
     # Model
     model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, num_labels=len(SIGNAL_LABELS), id2label=id2label, label2id=label2id)
+    if hasattr(model, "gradient_checkpointing_enable"):
+        model.gradient_checkpointing_enable()
 
     args = TrainingArguments(
         output_dir=str(BASE_DIR / "results_signal"),
+        overwrite_output_dir=True,
         learning_rate=3e-5,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=TRAIN_BATCH_SIZE,
+        per_device_eval_batch_size=EVAL_BATCH_SIZE,
+        gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+        eval_accumulation_steps=EVAL_ACCUMULATION_STEPS,
         num_train_epochs=7,
         weight_decay=0.01,
         eval_strategy="epoch",
         save_strategy="epoch",
+        save_total_limit=2,
         load_best_model_at_end=True,
         metric_for_best_model="macro_f1",
         fp16=torch.cuda.is_available(),
+        gradient_checkpointing=True,
+        group_by_length=True,
+        warmup_ratio=0.1,
         logging_steps=50,
         report_to="none",
     )
@@ -116,6 +143,7 @@ def main():
         tokenizer=tokenizer,
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
         compute_metrics=compute_metrics,
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
     )
 
     # Train
@@ -149,7 +177,7 @@ def main():
     with open(LOG_DIR / "signal_training_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
-    print(f"\n✅ Training complete in {elapsed:.0f}s")
+    print(f"\nTraining complete in {elapsed:.0f}s")
     print(f"  Best macro F1: {trainer.state.best_metric:.4f}")
     print(f"  Model saved to: {MODEL_OUT}")
     print(f"  Metrics saved to: logs/signal_training_metrics.json")

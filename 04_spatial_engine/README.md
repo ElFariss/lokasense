@@ -26,7 +26,7 @@ Default weights: w₁=0.30, w₂=0.15, w₃=0.10, w₄=0.20, w₅=0.10, w₆=0.0
 ## Heatmap Color Coding
 | Color | Score Range | Meaning |
 |-------|------------|---------|
-| 🟢 Green | ≥0.65 | Strong opportunity |
-| 🟡 Yellow | 0.40–0.65 | Moderate opportunity |
-| 🔴 Red | <0.40 | Saturated/risky |
+| Green | ≥0.65 | Strong opportunity |
+| Yellow | 0.40–0.65 | Moderate opportunity |
+| Red | <0.40 | Saturated/risky |
 | ⬜ Gray | N/A | Insufficient data |

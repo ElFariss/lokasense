@@ -102,7 +102,7 @@ def compute_opportunity_scores(labeled_df, poi_df=None):
     with open(LOG_DIR / "opportunity_scores.json", "w") as f:
         json.dump(results, f, indent=2, default=str)
 
-    print(f"✅ Scored {len(results)} area × business combinations")
+    print(f"Scored {len(results)} area x business combinations")
     return results_df
 
 
@@ -114,7 +114,7 @@ def main():
     # Load labeled data
     labeled_file = DATA_DIR / "labeled" / "weak_labeled.csv"
     if not labeled_file.exists():
-        print("⚠ No labeled data found!")
+        print("No labeled data found.")
         return
 
     labeled_df = pd.read_csv(labeled_file)
@@ -126,7 +126,7 @@ def main():
     scores_df = compute_opportunity_scores(labeled_df, poi_df)
     
     if len(scores_df) > 0:
-        print(f"\n📊 Score Distribution:")
+        print(f"\nScore Distribution:")
         print(scores_df[['city', 'kecamatan', 'business_type', 'opportunity_score', 'label']].to_string(index=False))
 
 

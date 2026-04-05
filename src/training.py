@@ -197,7 +197,7 @@ dqconfig = AutoQuantizationConfig.avx512_vnni(is_static=False, per_channel=True)
 # This overwrites the original unquantized model.onnx with the quantized one
 quantizer.quantize(save_dir=onnx_export_path, quantization_config=dqconfig)
 
-print("✅ Model successfully exported and quantized to `signal_onnx/`")
+print("Model successfully exported and quantized to `signal_onnx/`")
 
 # %% [markdown]
 # ## 5. Model Evaluation (Test Set)
@@ -229,7 +229,7 @@ for i in range(0, len(test_df), batch_size):
 
 end_time = time.time()
 inference_time = end_time - start_time
-print(f"✅ Tested ONNX inference: {inference_time/len(test_df)*1000:.1f}ms per sample on CPU!")
+print(f"Tested ONNX inference: {inference_time/len(test_df)*1000:.1f}ms per sample on CPU!")
 
 test_labels = test_df['final_signal'].map(label2id).values
 

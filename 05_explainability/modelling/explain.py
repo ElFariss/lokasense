@@ -77,7 +77,7 @@ def main():
     with open(LOG_DIR / "lime_explanations.json", "w", encoding="utf-8") as f:
         json.dump(explanations, f, indent=2, ensure_ascii=False)
 
-    print(f"\n✅ {len(explanations)} LIME explanations saved to logs/lime_explanations.json")
+    print(f"\n{len(explanations)} LIME explanations saved to logs/lime_explanations.json")
 
     # Print a sample
     if explanations:

@@ -4,5 +4,5 @@ import runpy
 
 
 if __name__ == "__main__":
-    target = Path(__file__).resolve().parent.parent / "03_signal_model" / "dataset" / "split.py"
+    target = Path(__file__).resolve().parent.parent / "01_data_collection" / "collect_social_bootstrap.py"
     runpy.run_path(str(target), run_name="__main__")

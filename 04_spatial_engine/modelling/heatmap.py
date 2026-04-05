@@ -95,7 +95,7 @@ def main():
 
     scores_file = LOG_DIR / "opportunity_scores.csv"
     if not scores_file.exists():
-        print("⚠ No scores found! Run scoring.py first.")
+        print("No scores found. Run scoring.py first.")
         return
 
     scores_df = pd.read_csv(scores_file)
@@ -105,7 +105,7 @@ def main():
     output_file = OUTPUT_DIR / "lokasense_heatmap.html"
     m.save(str(output_file))
 
-    print(f"\n✅ Heatmap saved to: {output_file}")
+    print(f"\nHeatmap saved to: {output_file}")
     print(f"  Open in browser to see the interactive map!")
 
 

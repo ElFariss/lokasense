@@ -128,7 +128,7 @@ Jawab:"""
                 return {"signal": signal, "confidence": 0.5, "reason": "parsed from non-JSON"}
         return {"signal": "NEUTRAL", "confidence": 0.3, "reason": "failed to parse"}
     except Exception as e:
-        print(f"  ⚠ Gemini error: {e}")
+        print(f"  Gemini error: {e}")
         return {"signal": "NEUTRAL", "confidence": 0.0, "reason": f"error: {str(e)[:50]}"}
 
 
@@ -198,7 +198,7 @@ def main():
     # Load weak-labeled data
     weak_labeled_file = LABELED_DIR / "weak_labeled.csv"
     if not weak_labeled_file.exists():
-        print("\n⚠ Run weak_labeling.py first!")
+        print("\nRun weak_label.py first.")
         return
 
     texts_to_label = []
@@ -229,11 +229,11 @@ def main():
         return
 
     # Initialize Gemini
-    print("\n🤖 Initializing Gemini 2.5 Flash...")
+    print("\nInitializing Gemini 2.5 Flash...")
     model = init_gemini()
 
     # Classify
-    print("\n🏷️  Running pseudo-labeling...")
+    print("\nRunning pseudo-labeling...")
     results = classify_batch(model, texts_to_label)
 
     # Save results
@@ -246,7 +246,7 @@ def main():
 
     # Statistics
     signal_counts = Counter(r["gemini_signal"] for r in results)
-    print(f"\n📊 Gemini Signal Distribution:")
+    print(f"\nGemini Signal Distribution:")
     for signal, count in signal_counts.most_common():
         pct = count / len(results) * 100
         print(f"  {signal:20s}  {count:>5}  ({pct:5.1f}%)")
@@ -259,7 +259,7 @@ def main():
         agree = sum(1 for r in results if r.get("signal") == r.get("gemini_signal"))
         print(f"  Agreement with weak labels: {agree}/{len(results)} ({agree / len(results) * 100:.1f}%)")
 
-    print(f"\n✅ Saved {len(results)} Gemini-labeled texts to {OUTPUT_FILE}")
+    print(f"\nSaved {len(results)} Gemini-labeled texts to {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":

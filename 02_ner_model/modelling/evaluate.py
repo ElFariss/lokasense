@@ -24,7 +24,7 @@ def main():
 
     test_file = TEST_DIR / "ner_test.json"
     if not test_file.exists():
-        print("⚠ Test data not found")
+        print("Test data not found.")
         return
 
     with open(test_file) as f:
@@ -91,7 +91,7 @@ def main():
     with open(LOG_DIR / "ner_test_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
-    print(f"\n✅ Results saved to logs/ner_test_metrics.json")
+    print(f"\nResults saved to logs/ner_test_metrics.json")
 
 
 if __name__ == "__main__":

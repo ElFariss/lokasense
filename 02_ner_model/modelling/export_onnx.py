@@ -21,7 +21,7 @@ def main():
     print("=" * 60)
 
     if not MODEL_IN.exists():
-        print(f"⚠ Model not found at {MODEL_IN}. Run train.py first!")
+        print(f"Model not found at {MODEL_IN}. Run training.ipynb first.")
         return
 
     import torch
@@ -69,7 +69,7 @@ def main():
     with open(LOG_DIR / "ner_onnx_export.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
-    print(f"\n✅ Export complete!")
+    print(f"\nExport complete.")
     print(f"  Unquantized: {unquant_size_mb:.1f} MB → Quantized: {quant_size_mb:.1f} MB")
     print(f"  Saved to: {ONNX_OUT}")
 

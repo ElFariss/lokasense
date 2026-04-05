@@ -84,7 +84,7 @@ def main():
     with open(LOG_DIR / "signal_test_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
-    print(f"\n✅ Test evaluation complete!")
+    print(f"\nTest evaluation complete.")
     print(f"  Macro F1: {metrics['macro_f1']}")
     print(f"  CPU latency: {metrics['avg_latency_ms']}ms/sample")
     print(f"  Results saved to: logs/signal_test_metrics.json")

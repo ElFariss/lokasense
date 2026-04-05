@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+logs/
+results_ner/
+results_signal/
+models/
+ner_onnx/
+signal_onnx/
+data/
+train_data/
+test_data/
+outputs/
+*.safetensors
+*.onnx
+*.bin

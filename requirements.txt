@@ -1,0 +1,46 @@
+# LokaSense (Pasarint) - Dependencies
+# Core ML
+torch>=2.0
+transformers>=4.40
+datasets
+tokenizers
+accelerate
+
+# ONNX Optimization
+optimum[onnxruntime]
+onnxruntime
+
+# NER Evaluation
+seqeval
+
+# ML Utilities
+scikit-learn
+scipy
+
+# Explainability (Track C - MANDATORY)
+lime
+shap
+
+# Data Processing
+pandas
+numpy
+tqdm
+
+# Geospatial
+geopandas
+folium
+branca
+shapely
+
+# API & Data Collection
+requests
+overpy
+google-generativeai
+python-dotenv
+
+# Visualization
+matplotlib
+seaborn
+
+# SLM (llama.cpp Python bindings)
+llama-cpp-python

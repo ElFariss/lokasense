@@ -12,9 +12,9 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from common.market_catalog import BUSINESS_HINTS, CITIES_KECAMATAN
 from common.text_normalization import (
     is_probably_indonesian,
-    language_scores,
     normalize_for_dedupe,
     normalize_text,
+    strip_emoji,
     tokenize_with_offsets,
 )
 
@@ -23,6 +23,8 @@ SCRAPED_DIR = BASE_DIR / "data" / "scraped"
 SOCIAL_DIR = BASE_DIR / "data" / "social_media"
 POI_FILE = BASE_DIR / "data" / "poi" / "overpass_poi.csv"
 ADMIN_DIR = BASE_DIR / "data" / "geospatial" / "Wilayah-Administratif-Indonesia" / "csv"
+SENTENCE_BOUNDARY_RE = re.compile(r"(?:[\r\n]+|(?<=[.!?])\s+)")
+CLAUSE_BOUNDARY_RE = re.compile(r"\s*[;,]\s+")
 
 
 def stable_hash(text: str) -> str:
@@ -36,6 +38,52 @@ def stable_split(text: str) -> str:
     if value < 90:
         return "validation"
     return "test"
+
+
+def text_candidates(raw_text: str) -> list[str]:
+    """
+    Expand a noisy post or review into classifier-ready candidates.
+
+    We keep the full text when it is reasonably short, and also salvage
+    sentence/clause-level Indonesian fragments from longer mixed-language text.
+    """
+    if not isinstance(raw_text, str):
+        return []
+
+    raw_text = strip_emoji(raw_text).replace("\u200b", " ").strip()
+    if not raw_text:
+        return []
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(candidate_text: str) -> None:
+        normalized = normalize_text(candidate_text)
+        token_count = len(normalized.split())
+        if len(normalized) < 12 or len(normalized) > 240:
+            return
+        if token_count < 3 or token_count > 48:
+            return
+        dedupe_key = normalize_for_dedupe(normalized)
+        if not dedupe_key or dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        candidates.append(normalized)
+
+    whole_text = normalize_text(raw_text)
+    if len(whole_text) <= 220:
+        add_candidate(whole_text)
+
+    for sentence in SENTENCE_BOUNDARY_RE.split(raw_text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        add_candidate(sentence)
+        if len(sentence) > 160:
+            for clause in CLAUSE_BOUNDARY_RE.split(sentence):
+                add_candidate(clause.strip())
+
+    return candidates[:8]
 
 
 def canonicalize_url(url: str) -> str:
@@ -198,35 +246,45 @@ def weak_ner_tags_from_candidates(text: str, candidate_spans: list[CandidateSpan
     return tokens, labels
 
 
-def build_signal_bootstrap_rows() -> list[dict[str, str]]:
+def build_signal_bootstrap_rows(*, include_google_maps: bool = False) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     seen_texts: set[str] = set()
 
-    def append_row(raw_text: str, platform: str, source: str, url: str, timestamp: str, city: str, area_hint: str, business_hint: str, query: str) -> None:
-        text = normalize_text(raw_text)
-        if len(text) < 12:
-            return
+    def append_row(
+        raw_text: str,
+        platform: str,
+        source: str,
+        url: str,
+        timestamp: str,
+        city: str,
+        area_hint: str,
+        business_hint: str,
+        query: str,
+        query_intent: str = "",
+    ) -> None:
         strict_language = platform == "google_maps"
-        if not is_probably_indonesian(text, strict=strict_language):
-            return
-        text_hash = stable_hash(normalize_for_dedupe(text))
-        if text_hash in seen_texts:
-            return
-        seen_texts.add(text_hash)
-        rows.append(
-            {
-                "text": text,
-                "source": source,
-                "platform": platform,
-                "url": url,
-                "timestamp": timestamp,
-                "area_hint": area_hint,
-                "city": city,
-                "business_hint": business_hint,
-                "query": normalize_text(query),
-                "provenance_split": stable_split(text),
-            }
-        )
+        for text in text_candidates(raw_text):
+            if not is_probably_indonesian(text, strict=strict_language):
+                continue
+            text_hash = stable_hash(normalize_for_dedupe(text))
+            if text_hash in seen_texts:
+                continue
+            seen_texts.add(text_hash)
+            rows.append(
+                {
+                    "text": text,
+                    "source": source,
+                    "platform": platform,
+                    "url": url,
+                    "timestamp": timestamp,
+                    "area_hint": area_hint,
+                    "city": city,
+                    "business_hint": business_hint,
+                    "query": normalize_text(query),
+                    "query_intent": query_intent,
+                    "provenance_split": stable_split(text),
+                }
+            )
 
     for platform_file, platform_name in [
         (SOCIAL_DIR / "tiktok_data.csv", "tiktok"),
@@ -244,20 +302,23 @@ def build_signal_bootstrap_rows() -> list[dict[str, str]]:
                 area_hint=row.get("area_hint", ""),
                 business_hint=row.get("business_hint", ""),
                 query=row.get("query", ""),
+                query_intent=row.get("query_intent", ""),
             )
 
-    for row in load_csv_rows(SOCIAL_DIR / "gmaps_reviews.csv"):
-        append_row(
-            raw_text=row.get("text", ""),
-            platform="google_maps",
-            source=row.get("source", "google_maps"),
-            url=google_maps_search_url(row.get("place_name", ""), row.get("place_address", "")),
-            timestamp=row.get("timestamp", ""),
-            city=row.get("city", ""),
-            area_hint=row.get("area_hint", ""),
-            business_hint=row.get("business_hint", ""),
-            query=row.get("query", ""),
-        )
+    if include_google_maps:
+        for row in load_csv_rows(SOCIAL_DIR / "gmaps_reviews.csv"):
+            append_row(
+                raw_text=row.get("text", ""),
+                platform="google_maps",
+                source=row.get("source", "google_maps"),
+                url=google_maps_search_url(row.get("place_name", ""), row.get("place_address", "")),
+                timestamp=row.get("timestamp", ""),
+                city=row.get("city", ""),
+                area_hint=row.get("area_hint", ""),
+                business_hint=row.get("business_hint", ""),
+                query=row.get("query", ""),
+                query_intent=row.get("query_intent", ""),
+            )
 
     return rows
 

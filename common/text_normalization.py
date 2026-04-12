@@ -8,6 +8,32 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SLANG_FILE = BASE_DIR / "data" / "slang" / "slang_dict.json"
 
 _slang_dict: dict[str, str] = {}
+DEFAULT_SLANG_MAP: dict[str, str] = {
+    "bgt": "banget",
+    "bgtt": "banget",
+    "bngt": "banget",
+    "gk": "gak",
+    "gaa": "gak",
+    "ga": "gak",
+    "ngga": "nggak",
+    "nggk": "nggak",
+    "tdk": "tidak",
+    "blm": "belum",
+    "udh": "udah",
+    "sdh": "sudah",
+    "dkt": "dekat",
+    "deket": "dekat",
+    "dr": "dari",
+    "yg": "yang",
+    "tp": "tapi",
+    "krn": "karena",
+    "sm": "sama",
+    "ajaa": "aja",
+    "murmer": "murah meriah",
+    "rekomen": "rekomendasi",
+    "wkwkwk": "wkwk",
+    "org": "orang",
+}
 
 INDONESIAN_HINT_WORDS: set[str] = {
     "yang", "dan", "di", "ke", "dari", "ini", "itu", "untuk", "dengan", "karena",
@@ -53,7 +79,11 @@ EMOJI_PATTERN = re.compile(
 def load_slang_dict() -> dict[str, str]:
     """Load the shared Indonesian slang normalization dictionary."""
     global _slang_dict
-    if _slang_dict or not SLANG_FILE.exists():
+    if _slang_dict:
+        return _slang_dict
+
+    _slang_dict.update(DEFAULT_SLANG_MAP)
+    if not SLANG_FILE.exists():
         return _slang_dict
 
     with open(SLANG_FILE, "r", encoding="utf-8") as handle:

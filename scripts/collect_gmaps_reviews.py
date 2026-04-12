@@ -22,8 +22,7 @@ import requests
 # ─── Configuration ──────────────────────────────────────────────────────────
 
 BASE_DIR = Path(__file__).parent.parent
-ENV_DIR = BASE_DIR.parent  # UGM_HACKATHON level where .env lives
-load_dotenv(ENV_DIR / ".env")
+load_dotenv(BASE_DIR / ".env")
 
 OUTPUT_DIR = BASE_DIR / "data" / "social_media"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -212,7 +211,7 @@ def _save_checkpoint(reviews, output_dir):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(reviews)
-            print(f"    Checkpoint: {len(reviews)} reviews saved")
+    print(f"    Checkpoint: {len(reviews)} reviews saved")
 
 
 if __name__ == "__main__":

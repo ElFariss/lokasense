@@ -7,9 +7,14 @@ import json
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from collections import defaultdict
 
 BASE_DIR = Path(__file__).parent.parent.parent
+import sys
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from common.location_resolution import LocationResolver
+
 DATA_DIR = BASE_DIR / "data"
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -24,15 +29,40 @@ WEIGHTS = {
     "SUPPLY_SIGNAL": -0.05,
     "NEUTRAL": 0.0,
 }
+HALF_LIFE_DAYS = 30.0
+DECAY_LAMBDA = np.log(2) / HALF_LIFE_DAYS
+MIN_SIGNAL_SCORE = min(WEIGHTS.values())
+MAX_SIGNAL_SCORE = max(WEIGHTS.values())
+MIN_RAW_SCORE = MIN_SIGNAL_SCORE - 0.10
+MAX_RAW_SCORE = MAX_SIGNAL_SCORE
 
 
-def compute_opportunity_scores(labeled_df, poi_df=None):
+def compute_decay_weights(group: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    timestamps = pd.to_datetime(group.get("timestamp"), utc=True, errors="coerce")
+    if timestamps.isna().all():
+        age_days = pd.Series(np.zeros(len(group)), index=group.index, dtype=float)
+        decay = pd.Series(np.ones(len(group)), index=group.index, dtype=float)
+        return age_days, decay
+
+    now = pd.Timestamp.utcnow()
+    age_days = ((now - timestamps).dt.total_seconds() / 86400.0).clip(lower=0).fillna(0.0)
+    decay = np.exp(-DECAY_LAMBDA * age_days)
+    return age_days, pd.Series(decay, index=group.index, dtype=float)
+
+
+def normalize_score(raw_score: float) -> float:
+    scaled = (raw_score - MIN_RAW_SCORE) / (MAX_RAW_SCORE - MIN_RAW_SCORE)
+    return float(max(0.0, min(1.0, scaled)))
+
+
+def compute_opportunity_scores(labeled_df, poi_df=None, resolver: LocationResolver | None = None):
     """
     Compute opportunity score per (city, kecamatan, business_type).
     
     Score = Σ(weight_signal × count_signal / total) - franchise_penalty
     """
     results = []
+    resolver = resolver or LocationResolver()
     
     # Group by area + business type
     if 'area_hint' not in labeled_df.columns:
@@ -52,16 +82,15 @@ def compute_opportunity_scores(labeled_df, poi_df=None):
         # Count signals
         signal_col = 'final_signal' if 'final_signal' in group.columns else 'signal'
         signal_counts = group[signal_col].value_counts().to_dict()
+        age_days, decay_weights = compute_decay_weights(group)
+        total_weight = float(decay_weights.sum()) or 1.0
 
         # Compute weighted score
-        score = 0.0
+        signal_score = 0.0
         for signal, weight in WEIGHTS.items():
-            count = signal_counts.get(signal, 0)
-            rate = count / total
-            score += weight * rate
-
-        # Normalize to 0-1 range
-        score = max(0, min(1, (score + 0.5)))  # shift from [-0.5, 0.5] to [0, 1]
+            signal_weight = float(decay_weights[group[signal_col] == signal].sum())
+            rate = signal_weight / total_weight
+            signal_score += weight * rate
 
         # Franchise penalty from POI data
         franchise_ratio = 0.0
@@ -69,7 +98,10 @@ def compute_opportunity_scores(labeled_df, poi_df=None):
             city_pois = poi_df[(poi_df['city'] == city) & (poi_df['business_type'] == biz)]
             if len(city_pois) > 0:
                 franchise_ratio = city_pois['is_franchise'].mean()
-                score -= 0.10 * franchise_ratio
+
+        raw_score = signal_score - (0.10 * franchise_ratio)
+        score = normalize_score(raw_score)
+        location = resolver.resolve_area(city, kec)
 
         # Color coding
         if score >= 0.65:
@@ -91,7 +123,14 @@ def compute_opportunity_scores(labeled_df, poi_df=None):
             "label": label,
             "total_signals": total,
             "signal_breakdown": signal_counts,
+            "raw_signal_score": round(signal_score, 4),
+            "raw_score_after_penalty": round(raw_score, 4),
             "franchise_ratio": round(franchise_ratio, 3),
+            "avg_age_days": round(float(age_days.mean()), 2),
+            "avg_decay_weight": round(float(decay_weights.mean()), 4),
+            "resolved_lat": location["lat"],
+            "resolved_lng": location["lng"],
+            "resolution_source": location["resolution_source"],
         })
 
     results_df = pd.DataFrame(results)

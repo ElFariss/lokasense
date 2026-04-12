@@ -1,6 +1,8 @@
 .venv/
 .env
 .env.*
+.codex
+.codex/
 __pycache__/
 *.pyc
 logs/

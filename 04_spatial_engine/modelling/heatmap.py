@@ -38,15 +38,18 @@ def create_marker_map(scores_df):
 
     for _, row in scores_df.iterrows():
         city = row.get("city", "")
-        if city not in city_coords:
-            continue
+        lat = row.get("resolved_lat")
+        lon = row.get("resolved_lng")
+        if pd.isna(lat) or pd.isna(lon):
+            if city not in city_coords:
+                continue
+            lat, lon = city_coords[city]
+            # Offset markers slightly per kecamatan to avoid overlap
+            import hashlib
 
-        lat, lon = city_coords[city]
-        # Offset markers slightly per kecamatan to avoid overlap
-        import hashlib
-        offset = int(hashlib.md5(str(row.get("kecamatan", "")).encode()).hexdigest()[:4], 16) / 65535
-        lat += (offset - 0.5) * 0.05
-        lon += (offset - 0.5) * 0.05
+            offset = int(hashlib.md5(str(row.get("kecamatan", "")).encode()).hexdigest()[:4], 16) / 65535
+            lat += (offset - 0.5) * 0.05
+            lon += (offset - 0.5) * 0.05
 
         score = row.get("opportunity_score", 0.5)
         color = row.get("color", "yellow")
@@ -59,7 +62,9 @@ def create_marker_map(scores_df):
         Business: {biz}<br>
         Score: <b>{score:.2f}</b><br>
         Status: <span style='color:{color_map.get(color, "#999")}'><b>{label}</b></span><br>
-        Signals: {row.get('total_signals', 0)}
+        Signals: {row.get('total_signals', 0)}<br>
+        Avg age: {row.get('avg_age_days', 0)} days<br>
+        Location source: {row.get('resolution_source', 'fallback')}
         """
 
         folium.CircleMarker(

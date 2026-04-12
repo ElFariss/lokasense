@@ -37,35 +37,107 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
-from IPython.display import Markdown, display
+from dotenv import load_dotenv
+from IPython.display import display
 
 REPO_ROOT = Path.cwd()
 assert (REPO_ROOT / "01_data_collection").exists(), "Please run this notebook from the repo root."
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+SPATIAL_MODELLING_DIR = REPO_ROOT / "04_spatial_engine" / "modelling"
+if str(SPATIAL_MODELLING_DIR) not in sys.path:
+    sys.path.insert(0, str(SPATIAL_MODELLING_DIR))
+
+import scoring as spatial_scoring
+import heatmap as spatial_heatmap
 
 from common.bootstrap_utils import build_ner_bootstrap_rows, build_signal_bootstrap_rows
+from common.location_resolution import LocationResolver
 from common.text_normalization import language_scores, strip_emoji
 
-pd.set_option("display.max_colwidth", 120)
+load_dotenv(REPO_ROOT / ".env")
+
+pd.set_option("display.max_colwidth", 160)
 pd.set_option("display.max_rows", 200)
 sns.set_theme(style="whitegrid")
 
 SCRAPING_PYTHON = REPO_ROOT / ".venv_scraping" / "bin" / "python"
-TIKTOK_SOURCE_FILE = REPO_ROOT / "data" / "social_media" / "tiktok_data.csv"
-FORCE_TIKTOK_REFRESH = False
-RUN_TIKTOK_REFRESH = FORCE_TIKTOK_REFRESH or (not TIKTOK_SOURCE_FILE.exists())
-RESET_TIKTOK_SOURCE = FORCE_TIKTOK_REFRESH
-TIKTOK_REFRESH_ARGS = [
-    str(SCRAPING_PYTHON if SCRAPING_PYTHON.exists() else Path(sys.executable)),
-    "01_data_collection/collect_social_bootstrap.py",
-    "--platform", "tiktok",
-    "--max-queries", "80",
-    "--max-per-query", "8",
-    "--max-saved-rows", "80",
-    "--headless",
-    "--query-delay", "0.5",
+SOCIAL_SOURCE_FILES = {
+    "tiktok": REPO_ROOT / "data" / "social_media" / "tiktok_data.csv",
+    "instagram": REPO_ROOT / "data" / "social_media" / "instagram_data.csv",
+    "x": REPO_ROOT / "data" / "social_media" / "x_data.csv",
+}
+
+
+def count_existing_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        df = pd.read_csv(path)
+        return int(len(df))
+    except Exception:
+        return 0
+
+
+SOCIAL_REFRESH_SPECS = [
+    {
+        "platform": "tiktok",
+        "source_file": SOCIAL_SOURCE_FILES["tiktok"],
+        "min_rows": int(os.getenv("NOTEBOOK_MIN_TIKTOK_ROWS", "220")),
+        "max_queries": int(os.getenv("NOTEBOOK_TIKTOK_MAX_QUERIES", "180")),
+        "max_saved_rows": int(os.getenv("NOTEBOOK_TIKTOK_MAX_ROWS", "240")),
+    },
+    {
+        "platform": "instagram",
+        "source_file": SOCIAL_SOURCE_FILES["instagram"],
+        "min_rows": int(os.getenv("NOTEBOOK_MIN_INSTAGRAM_ROWS", "80")),
+        "max_queries": int(os.getenv("NOTEBOOK_INSTAGRAM_MAX_QUERIES", "120")),
+        "max_saved_rows": int(os.getenv("NOTEBOOK_INSTAGRAM_MAX_ROWS", "100")),
+    },
+    {
+        "platform": "x",
+        "source_file": SOCIAL_SOURCE_FILES["x"],
+        "min_rows": int(os.getenv("NOTEBOOK_MIN_X_ROWS", "80")),
+        "max_queries": int(os.getenv("NOTEBOOK_X_MAX_QUERIES", "120")),
+        "max_saved_rows": int(os.getenv("NOTEBOOK_X_MAX_ROWS", "100")),
+    },
 ]
+for spec in SOCIAL_REFRESH_SPECS:
+    spec["existing_rows"] = count_existing_rows(spec["source_file"])
+
+FORCE_SOCIAL_REFRESH = os.getenv("FORCE_NOTEBOOK_SOCIAL_REFRESH", "0") == "1"
+SOCIAL_REFRESH_PLAN = [
+    spec
+    for spec in SOCIAL_REFRESH_SPECS
+    if FORCE_SOCIAL_REFRESH or int(spec["existing_rows"]) < int(spec["min_rows"])
+]
+INCLUDE_GOOGLE_MAPS_CACHE = os.getenv("INCLUDE_GMAPS_CACHE", "0") == "1"
+RUN_GEMINI_AUGMENTATION = os.getenv("ENABLE_NOTEBOOK_GEMINI", "0") == "1"
+GEMINI_MAX_SAMPLES = int(os.getenv("NOTEBOOK_GEMINI_MAX_SAMPLES", "1200"))
+FORCE_GEMINI_REFRESH = os.getenv("FORCE_NOTEBOOK_GEMINI_REFRESH", "0") == "1"
+RUN_MODEL_PSEUDOLABEL = os.getenv("ENABLE_NOTEBOOK_MODEL_PSEUDOLABEL", "0") == "1"
+MODEL_PSEUDOLABEL_MAX_SAMPLES = int(os.getenv("NOTEBOOK_MODEL_PSEUDOLABEL_MAX_SAMPLES", "600"))
+FORCE_MODEL_PSEUDOLABEL_REFRESH = os.getenv("FORCE_NOTEBOOK_MODEL_PSEUDOLABEL_REFRESH", "0") == "1"
+GOOGLE_MAPS_REFRESH_REQUESTED = os.getenv("ENABLE_GOOGLE_MAPS_REFRESH", "0") == "1"
+if GOOGLE_MAPS_REFRESH_REQUESTED:
+    print("Notebook keeps Google Maps refresh disabled. Run collect_gmaps_reviews.py --confirm-billable manually if you truly need it.")
+
+def build_social_refresh_args(spec: dict[str, object]) -> list[str]:
+    return [
+        str(SCRAPING_PYTHON if SCRAPING_PYTHON.exists() else Path(sys.executable)),
+        "01_data_collection/collect_social_bootstrap.py",
+        "--platform",
+        str(spec["platform"]),
+        "--max-queries",
+        str(spec["max_queries"]),
+        "--max-per-query",
+        "8",
+        "--max-saved-rows",
+        str(spec["max_saved_rows"]),
+        "--headless",
+        "--query-delay",
+        "0.6",
+    ]
 
 SIGNAL_LABELS = [
     "NEUTRAL",
@@ -76,6 +148,13 @@ SIGNAL_LABELS = [
     "COMPLAINT",
     "TREND",
 ]
+
+READINESS_THRESHOLDS = {
+    "signal_train_rows": 300,
+    "signal_eval_macro_f1": 0.55,
+    "ner_eval_micro_f1": 0.75,
+    "opportunity_groups": 5,
+}
 
 
 def run_command(args, cwd=REPO_ROOT, extra_env=None):
@@ -116,16 +195,6 @@ def read_json(path: Path):
         return json.load(handle)
 
 
-def reset_tiktok_artifacts():
-    for path in [
-        REPO_ROOT / "data" / "social_media" / "tiktok_data.csv",
-        REPO_ROOT / "data" / "scraped" / "checkpoints" / "tiktok_crawl_state.json",
-    ]:
-        if path.exists():
-            path.unlink()
-            print(f"Removed {path}")
-
-
 def clean_preview_frame(df: pd.DataFrame) -> pd.DataFrame:
     preview = df.copy()
     for column in preview.columns:
@@ -134,8 +203,18 @@ def clean_preview_frame(df: pd.DataFrame) -> pd.DataFrame:
     return preview
 
 
+def reset_social_artifacts(platform: str) -> None:
+    for path in [
+        REPO_ROOT / "data" / "social_media" / f"{platform}_data.csv",
+        REPO_ROOT / "data" / "scraped" / "checkpoints" / f"{platform}_crawl_state.json",
+    ]:
+        if path.exists():
+            path.unlink()
+            print(f"Removed {path}")
+
+
 def validate_scraping_runtime():
-    scrape_python = Path(TIKTOK_REFRESH_ARGS[0])
+    scrape_python = Path(SCRAPING_PYTHON if SCRAPING_PYTHON.exists() else Path(sys.executable))
     if not scrape_python.exists():
         raise FileNotFoundError(f"Scraping Python runtime not found at {scrape_python}")
     probe = subprocess.run(
@@ -157,6 +236,13 @@ environment_summary = {
     "torch_version": torch.__version__,
     "cuda_available": torch.cuda.is_available(),
     "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu_only",
+    "social_rows": json.dumps({spec["platform"]: spec["existing_rows"] for spec in SOCIAL_REFRESH_SPECS}, ensure_ascii=False),
+    "social_min_rows": json.dumps({spec["platform"]: spec["min_rows"] for spec in SOCIAL_REFRESH_SPECS}, ensure_ascii=False),
+    "social_refresh_plan": json.dumps([spec["platform"] for spec in SOCIAL_REFRESH_PLAN], ensure_ascii=False),
+    "include_google_maps_cache": INCLUDE_GOOGLE_MAPS_CACHE,
+    "run_gemini_augmentation": RUN_GEMINI_AUGMENTATION,
+    "gemini_max_samples": GEMINI_MAX_SAMPLES,
+    "google_maps_refresh_disabled": True,
 }
 display(pd.DataFrame([environment_summary]))
 """
@@ -167,8 +253,8 @@ import json
 from pathlib import Path
 
 from seqeval.metrics import classification_report as seq_classification_report
-from transformers import AutoModelForSequenceClassification, AutoModelForTokenClassification, AutoTokenizer
 from sklearn.metrics import classification_report, confusion_matrix
+from transformers import AutoModelForSequenceClassification, AutoModelForTokenClassification, AutoTokenizer
 
 
 def evaluate_signal_checkpoint(model_dir: Path, test_path: Path):
@@ -239,6 +325,34 @@ def evaluate_signal_checkpoint(model_dir: Path, test_path: Path):
         json.dump(metrics_payload, handle, indent=2)
 
     return report_df, preview_df, metrics_payload
+
+
+def predict_signal_dataframe(model_dir: Path, df: pd.DataFrame, text_column: str = "text") -> pd.DataFrame:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
+    model = AutoModelForSequenceClassification.from_pretrained(str(model_dir)).to(device)
+    model.eval()
+
+    texts = df[text_column].fillna("").astype(str).tolist()
+    batch_size = 16
+    labels = []
+    confidences = []
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start:start + batch_size]
+        encoded = tokenizer(batch, padding=True, truncation=True, max_length=128, return_tensors="pt")
+        encoded = {key: value.to(device) for key, value in encoded.items()}
+        with torch.no_grad():
+            logits = model(**encoded).logits
+            batch_probs = torch.softmax(logits, dim=-1).cpu().numpy()
+        for prob in batch_probs:
+            top_index = int(np.argmax(prob))
+            labels.append(SIGNAL_LABELS[top_index])
+            confidences.append(round(float(prob[top_index]), 4))
+
+    predicted = df.copy()
+    predicted["final_signal"] = labels
+    predicted["signal_confidence"] = confidences
+    return predicted
 
 
 def regex_tokens(text: str):
@@ -343,6 +457,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from dotenv import load_dotenv
 from IPython.display import display
 from transformers import AutoModelForSequenceClassification, AutoModelForTokenClassification, AutoTokenizer
 
@@ -350,9 +465,20 @@ REPO_ROOT = Path.cwd()
 assert (REPO_ROOT / "models").exists(), "Please run this notebook from the repo root."
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+SPATIAL_MODELLING_DIR = REPO_ROOT / "04_spatial_engine" / "modelling"
+if str(SPATIAL_MODELLING_DIR) not in sys.path:
+    sys.path.insert(0, str(SPATIAL_MODELLING_DIR))
+
+import scoring as spatial_scoring
+
+from common.location_resolution import LocationResolver
+
+load_dotenv(REPO_ROOT / ".env")
 
 SIGNAL_MODEL_DIR = REPO_ROOT / "models" / "signal_base"
 NER_MODEL_DIR = REPO_ROOT / "models" / "ner_base"
+READINESS_FILE = REPO_ROOT / "logs" / "production_readiness.json"
+resolver = LocationResolver()
 SIGNAL_LABELS = [
     "NEUTRAL",
     "DEMAND_UNMET",
@@ -382,6 +508,7 @@ display(
                 "signal_model": str(SIGNAL_MODEL_DIR),
                 "ner_model": str(NER_MODEL_DIR),
                 "device": str(device),
+                "readiness_file": str(READINESS_FILE if READINESS_FILE.exists() else ""),
             }
         ]
     )
@@ -416,7 +543,7 @@ def predict_signal(texts):
     return pd.DataFrame(rows)
 
 
-def predict_ner_entities(text: str):
+def predict_ner_entities(text: str) -> list[dict[str, str]]:
     tokens = regex_tokens(text)
     encoded = ner_tokenizer(tokens, is_split_into_words=True, truncation=True, max_length=128, return_tensors="pt")
     word_ids = encoded.word_ids(batch_index=0)
@@ -452,7 +579,15 @@ def predict_ner_entities(text: str):
             current_label = None
     if current_tokens:
         entities.append({"entity": " ".join(current_tokens), "label": current_label})
-    return pd.DataFrame(entities or [{"entity": "", "label": "NO_ENTITY"}])
+    return entities
+
+
+def resolve_predicted_entities(text: str, city_hint: str = "", area_hint: str = "") -> pd.DataFrame:
+    entities = predict_ner_entities(text)
+    resolved = resolver.resolve_entities(entities, city_hint=city_hint, area_hint=area_hint)
+    if not resolved:
+        return pd.DataFrame([{"entity": "", "label": "NO_ENTITY", "resolved_city": city_hint, "resolved_area": area_hint, "lat": None, "lng": None, "resolution_source": "unresolved"}])
+    return pd.DataFrame(resolved)
 """
 
 
@@ -462,47 +597,50 @@ def build_training_notebook() -> nbf.NotebookNode:
             """
             # LokaSense Training Notebook
 
-            This notebook is the maintained training entry point for the project.
-            It rebuilds the pipeline in notebook form so the outputs live inside the cells instead of a detached terminal session.
-            It covers raw data inspection, Indonesian-first preprocessing, weak labeling, split creation, model training, and PyTorch test evaluation.
+            This is the maintained end-to-end training path for the repo.
+            It is public-scrape first, free-by-default, and writes the outputs directly into notebook cells.
             """
         ),
         md(
             """
             ## Notebook Flow
 
-            1. Check the training environment and available hardware.
-            2. Inspect the currently available raw datasets.
-            3. Run lightweight EDA on language mix, sources, and market coverage.
-            4. Rebuild the scraped bootstrap datasets used by the downstream pipeline.
-            5. Regenerate weak labels and train/validation/test splits.
-            6. Train the signal model and the NER model.
-            7. Evaluate both checkpoints directly from the saved PyTorch model folders.
+            1. Validate the environment and the notebook safety switches.
+            2. Reuse existing public scrape data or refresh the public social sources if the local corpora are too small.
+            3. Run EDA on source mix and language mix.
+            4. Rebuild `signal_bootstrap.csv` and `ner_bootstrap.jsonl`.
+            5. Generate weak labels and optional Gemini augmentation.
+            6. Create leakage-safe train, validation, and test splits.
+            7. Train and evaluate the signal model and the NER model.
+            8. Run production-style opportunity scoring and write a readiness summary.
             """
         ),
         code(TRAINING_SETUP),
         md(
             """
-            The setup cell establishes the repo root, helper functions, and environment summary.
-            If you reopen this notebook later, rerunning that cell is the quickest way to restore the working state.
+            The setup cell shows the exact execution mode up front.
+            Google Maps refresh is intentionally disabled here, and Gemini augmentation is opt-in through an environment variable instead of being silently baked into the notebook.
             """
         ),
         code(
             """
             raw_files = {
-                "tiktok": REPO_ROOT / "data" / "social_media" / "tiktok_data.csv",
-                "instagram": REPO_ROOT / "data" / "social_media" / "instagram_data.csv",
-                "x": REPO_ROOT / "data" / "social_media" / "x_data.csv",
+                **SOCIAL_SOURCE_FILES,
                 "google_maps": REPO_ROOT / "data" / "social_media" / "gmaps_reviews.csv",
             }
 
-            if RUN_TIKTOK_REFRESH:
+            if SOCIAL_REFRESH_PLAN:
                 validate_scraping_runtime()
-                if RESET_TIKTOK_SOURCE:
-                    reset_tiktok_artifacts()
-                run_command(TIKTOK_REFRESH_ARGS)
+                for spec in SOCIAL_REFRESH_PLAN:
+                    if FORCE_SOCIAL_REFRESH:
+                        reset_social_artifacts(str(spec["platform"]))
+                    print(
+                        f"Refreshing {spec['platform']} because rows={spec['existing_rows']} "
+                        f"< min_rows={spec['min_rows']}"
+                    )
+                    run_command(build_social_refresh_args(spec))
             else:
-                print("Skipping TikTok refresh and reusing the current raw CSV files.")
+                print("Skipping public social refresh and reusing the current raw CSV files.")
 
             raw_counts = []
             for source, path in raw_files.items():
@@ -515,9 +653,8 @@ def build_training_notebook() -> nbf.NotebookNode:
         ),
         md(
             """
-            This cell is the notebook-friendly replacement for the old background scraping step.
-            If a TikTok source file already exists, the notebook reuses it by default so reruns stay practical.
-            If you want a fresh scrape, set `FORCE_TIKTOK_REFRESH = True` in the setup cell.
+            The notebook refreshes only the public social sources that are below their configured row thresholds.
+            That keeps reruns practical while still giving the complaint and review-heavy platforms a chance to contribute when they are missing.
             """
         ),
         code(
@@ -569,17 +706,13 @@ def build_training_notebook() -> nbf.NotebookNode:
         ),
         md(
             """
-            The EDA cell answers two practical questions before we train anything:
-
-            - Do we actually have Indonesian-domain text available right now?
-            - Which sources are dominating the pipeline?
-
-            That matters here because the repo previously leaned too hard on English Google Maps reviews, which is a poor fit for an IndoBERT-centered classifier.
+            This is the first hard sanity check.
+            If the Indonesian share is too small or the source mix is dominated by irrelevant text, the rest of the notebook will faithfully expose that problem instead of hiding it behind a headline metric.
             """
         ),
         code(
             """
-            signal_rows = build_signal_bootstrap_rows()
+            signal_rows = build_signal_bootstrap_rows(include_google_maps=INCLUDE_GOOGLE_MAPS_CACHE)
             signal_bootstrap_df = pd.DataFrame(signal_rows)
             signal_bootstrap_path = REPO_ROOT / "data" / "scraped" / "signal_bootstrap.csv"
             signal_bootstrap_df.to_csv(signal_bootstrap_path, index=False)
@@ -596,14 +729,13 @@ def build_training_notebook() -> nbf.NotebookNode:
             print(f"signal_rows = {len(signal_bootstrap_df)}")
             print(f"ner_rows = {len(ner_rows)}")
 
-            display(clean_preview_frame(signal_bootstrap_df.head(10)))
-            display(
-                signal_bootstrap_df.groupby(["platform", "city"])["text"].count().rename("rows").reset_index().sort_values("rows", ascending=False)
-            )
+            if not signal_bootstrap_df.empty:
+                display(clean_preview_frame(signal_bootstrap_df.head(10)))
+                display(
+                    signal_bootstrap_df.groupby(["platform", "city"])["text"].count().rename("rows").reset_index().sort_values("rows", ascending=False)
+                )
 
-            candidate_counts = [
-                len(row["candidate_spans"]) for row in ner_rows
-            ]
+            candidate_counts = [len(row["candidate_spans"]) for row in ner_rows]
             display(
                 pd.DataFrame(
                     {
@@ -617,12 +749,8 @@ def build_training_notebook() -> nbf.NotebookNode:
         ),
         md(
             """
-            This preprocessing stage rebuilds the two scraped bootstrap artifacts the rest of the repo expects:
-
-            - `signal_bootstrap.csv` for market-signal classification text
-            - `ner_bootstrap.jsonl` for weak location/business spans
-
-            The main change from the older pipeline is that the bootstrap is now filtered toward Indonesian-like text before it ever reaches training.
+            The bootstrap stage is where the public scrape becomes training-ready data.
+            By default it excludes Google Maps entirely, so the maintained path does not depend on a paid API or on the English-heavy review distribution that previously poisoned the signal set.
             """
         ),
         code(
@@ -631,25 +759,103 @@ def build_training_notebook() -> nbf.NotebookNode:
             weak_labeled_path = REPO_ROOT / "data" / "labeled" / "weak_labeled.csv"
             weak_df = pd.read_csv(weak_labeled_path)
 
-            weak_counts = (
-                weak_df["signal"]
-                .value_counts(dropna=False)
-                .rename_axis("signal")
-                .reset_index(name="rows")
-            )
+            weak_counts = weak_df["signal"].value_counts(dropna=False).rename_axis("signal").reset_index(name="rows")
+            weak_source_counts = weak_df["source"].value_counts(dropna=False).rename_axis("source").reset_index(name="rows")
+            weak_intent_counts = weak_df["query_intent"].fillna("").replace("", "unknown").value_counts(dropna=False).rename_axis("query_intent").reset_index(name="rows") if "query_intent" in weak_df.columns else pd.DataFrame()
             display(weak_counts)
-            display(weak_df[["text", "signal", "confidence", "source"]].head(12))
+            display(weak_source_counts)
+            if not weak_intent_counts.empty:
+                display(weak_intent_counts)
+            display(weak_df[["text", "signal", "confidence", "source", "platform", "city", "query_intent"]].head(12))
+            complaint_preview = weak_df[weak_df["signal"] == "COMPLAINT"][["text", "city", "business_hint", "query", "query_intent"]].head(10)
+            display(complaint_preview)
             """
         ),
         md(
             """
-            Weak labels are only a bootstrap layer, not the final truth.
-            This cell is still worth inspecting closely because it tells you which classes the current scrape can actually support and which ones are still data-scarce.
+            Weak labels remain just a bootstrap mechanism.
+            The useful part of this cell is the class coverage table, because it shows immediately whether the current scrape can support all seven business signals or whether the model is still starved on rare classes.
+            The complaint preview is especially important in this project, since that class had been nearly empty before the retrieval and rule updates.
             """
         ),
         code(
             """
-            run_command([sys.executable, "03_signal_model/dataset/split.py"])
+            gemini_file = REPO_ROOT / "data" / "labeled" / "gemini_augmented.csv"
+            model_pseudo_file = REPO_ROOT / "data" / "labeled" / "model_pseudo_augmented.csv"
+            if RUN_GEMINI_AUGMENTATION:
+                if FORCE_GEMINI_REFRESH or not gemini_file.exists():
+                    run_command(
+                        [
+                            sys.executable,
+                            "03_signal_model/dataset/gemini_label.py",
+                            "--mode",
+                            "augment",
+                            "--max-samples",
+                            str(GEMINI_MAX_SAMPLES),
+                        ]
+                    )
+                else:
+                    print(f"Reusing existing Gemini augmentation file: {gemini_file}")
+            else:
+                print("Skipping Gemini augmentation. Set ENABLE_NOTEBOOK_GEMINI=1 to opt in.")
+
+            if gemini_file.exists():
+                gemini_df = pd.read_csv(gemini_file)
+                gemini_counts = gemini_df["gemini_signal"].value_counts(dropna=False).rename_axis("gemini_signal").reset_index(name="rows")
+                gemini_sources = gemini_df["source"].value_counts(dropna=False).rename_axis("source").reset_index(name="rows")
+                display(gemini_counts)
+                display(gemini_sources)
+                display(gemini_df[["text", "gemini_signal", "gemini_confidence", "source", "label_source"]].head(12))
+            else:
+                print("No Gemini augmentation file found.")
+
+            if RUN_MODEL_PSEUDOLABEL:
+                if (REPO_ROOT / "models" / "signal_base").exists():
+                    if FORCE_MODEL_PSEUDOLABEL_REFRESH or not model_pseudo_file.exists():
+                        run_command(
+                            [
+                                sys.executable,
+                                "03_signal_model/dataset/model_pseudo_label.py",
+                                "--max-samples",
+                                str(MODEL_PSEUDOLABEL_MAX_SAMPLES),
+                            ]
+                        )
+                    else:
+                        print(f"Reusing existing local IndoBERT pseudolabel file: {model_pseudo_file}")
+                else:
+                    print("Skipping local IndoBERT pseudolabeling because models/signal_base does not exist yet.")
+            else:
+                print("Skipping local IndoBERT pseudolabeling. Set ENABLE_NOTEBOOK_MODEL_PSEUDOLABEL=1 to opt in.")
+
+            if model_pseudo_file.exists():
+                model_pseudo_df = pd.read_csv(model_pseudo_file)
+                model_pseudo_counts = model_pseudo_df["model_signal"].value_counts(dropna=False).rename_axis("model_signal").reset_index(name="rows")
+                model_pseudo_sources = model_pseudo_df["source"].value_counts(dropna=False).rename_axis("source").reset_index(name="rows")
+                display(model_pseudo_counts)
+                display(model_pseudo_sources)
+                display(model_pseudo_df[["text", "model_signal", "model_confidence", "model_margin", "source", "label_source"]].head(12))
+            else:
+                print("No local IndoBERT pseudolabel file found.")
+            """
+        ),
+        md(
+            """
+            Gemini augmentation is now an explicit notebook switch and can contribute net-new supervised rows instead of only overriding existing labels.
+            If you keep it off, the notebook still runs fully end to end using only the free public scrape path.
+            If you keep it on, the notebook reuses an existing Gemini file unless you set `FORCE_NOTEBOOK_GEMINI_REFRESH=1`.
+            Local IndoBERT pseudolabeling is also available for a no-API self-training pass, but it still stays train-only so the notebook does not grade the model on its own pseudolabels.
+            """
+        ),
+        code(
+            """
+            run_command(
+                [sys.executable, "03_signal_model/dataset/split.py"],
+                extra_env={
+                    "USE_GEMINI_AUGMENTATION": "1" if RUN_GEMINI_AUGMENTATION else "0",
+                    "USE_GEMINI_OVERRIDES": "0",
+                    "USE_MODEL_PSEUDOLABELS": "1" if RUN_MODEL_PSEUDOLABEL else "0",
+                },
+            )
             run_command([sys.executable, "02_ner_model/dataset/prepare.py"])
 
             signal_split_paths = {
@@ -659,12 +865,21 @@ def build_training_notebook() -> nbf.NotebookNode:
             }
 
             signal_distribution_frames = []
+            split_sizes = []
+            split_text_sets = {}
             for split_name, split_path in signal_split_paths.items():
                 split_df = pd.read_csv(split_path)
+                split_sizes.append({"split": split_name, "rows": len(split_df)})
+                split_text_sets[split_name] = set(split_df["text"].astype(str))
                 counts = split_df["final_signal"].value_counts().rename(split_name)
                 signal_distribution_frames.append(counts)
             signal_distribution_df = pd.concat(signal_distribution_frames, axis=1).fillna(0).astype(int)
+            signal_distribution_df = signal_distribution_df.reindex(SIGNAL_LABELS, fill_value=0)
+            leakage_count = len(split_text_sets["train"].intersection(split_text_sets["test"]))
+
+            display(pd.DataFrame(split_sizes))
             display(signal_distribution_df)
+            display(pd.DataFrame([{"train_test_leakage": leakage_count}]))
 
             with open(REPO_ROOT / "train_data" / "ner_train.json", "r", encoding="utf-8") as handle:
                 ner_train = json.load(handle)
@@ -680,15 +895,15 @@ def build_training_notebook() -> nbf.NotebookNode:
         ),
         md(
             """
-            At this stage the notebook has reproduced the train/validation/test assets that the standalone scripts use.
-            The signal split table is the quickest sanity check for class sparsity, while the NER tag table confirms that the label cleanup reduced the schema to the entities we actually want to model.
+            This is the leakage and class-coverage checkpoint.
+            If the signal split is still tiny or if rare classes disappear from validation and test, the model results later in the notebook should be treated as development diagnostics, not production evidence.
             """
         ),
         code(TRAINING_EVAL_HELPERS),
         md(
             """
-            The helper cell above keeps the later training sections cleaner by handling PyTorch checkpoint evaluation directly in the notebook.
-            That lets us show the final reports in-place without depending on the ONNX export path.
+            The helper cell keeps the later sections cleaner by handling direct PyTorch evaluation and notebook-native scoring.
+            That avoids hiding model quality behind export-time optimizations.
             """
         ),
         code(
@@ -703,8 +918,7 @@ def build_training_notebook() -> nbf.NotebookNode:
         ),
         md(
             """
-            The signal training cell runs the current IndoBERT trainer exactly as the repo would from the terminal.
-            The metrics table below it is the compact summary you can scan without digging through the raw trainer log.
+            This cell trains the maintained signal model path and then reads the compact metrics JSON written by the trainer.
             """
         ),
         code(
@@ -720,8 +934,8 @@ def build_training_notebook() -> nbf.NotebookNode:
         ),
         md(
             """
-            The notebook uses direct PyTorch evaluation here on purpose.
-            It keeps the training notebook focused on model quality first, before any pruning or ONNX optimization choices enter the picture.
+            The signal model is only as strong as the supervision it sees.
+            This report is the honest checkpoint that should drive README claims, not any earlier experiment that used a different data regime.
             """
         ),
         code(
@@ -736,8 +950,7 @@ def build_training_notebook() -> nbf.NotebookNode:
         ),
         md(
             """
-            This NER training stage should now produce a much cleaner label space than the earlier mixed-schema runs.
-            If the label count suddenly jumps again, that usually means the raw NER tags are leaking inconsistent source labels back into preprocessing.
+            The NER path is trained after the signal model so both artifacts are refreshed inside one notebook run.
             """
         ),
         code(
@@ -753,7 +966,91 @@ def build_training_notebook() -> nbf.NotebookNode:
         ),
         md(
             """
-            The NER evaluation preview is especially useful for spot-checking whether the model is finding real place-like spans in Indonesian text instead of just memorizing a news-domain tag distribution.
+            The NER preview is useful as a qualitative sanity check because it exposes whether the model is actually extracting entity spans instead of only posting a decent aggregate F1.
+            """
+        ),
+        code(
+            """
+            scoring_input_df = predict_signal_dataframe(
+                REPO_ROOT / "models" / "signal_base",
+                pd.read_csv(signal_bootstrap_path),
+            )
+            poi_file = REPO_ROOT / "data" / "poi" / "overpass_poi.csv"
+            poi_df = pd.read_csv(poi_file) if poi_file.exists() else None
+            scores_df = spatial_scoring.compute_opportunity_scores(scoring_input_df, poi_df=poi_df, resolver=LocationResolver())
+            if not scores_df.empty and "opportunity_score" in scores_df.columns:
+                display(scores_df.sort_values("opportunity_score", ascending=False).head(20))
+            else:
+                print("No opportunity groups met the scoring threshold yet.")
+
+            heatmap_output = REPO_ROOT / "outputs" / "lokasense_heatmap.html"
+            marker_map = spatial_heatmap.create_marker_map(scores_df)
+            marker_map.save(str(heatmap_output))
+            print(f"Heatmap written to {heatmap_output}")
+            """
+        ),
+        md(
+            """
+            This cell exercises the scoring path exactly the way a production batch would use it: model predictions, time-decay weighting, franchise penalties, and resolved coordinates.
+            """
+        ),
+        code(
+            """
+            readiness_checks = [
+                {"check": "free_by_default", "passed": True, "details": "Notebook did not run Google Maps refresh."},
+                {"check": "train_test_leakage_zero", "passed": leakage_count == 0, "details": leakage_count},
+                {
+                    "check": "signal_train_rows",
+                    "passed": int(pd.read_csv(signal_split_paths["train"]).shape[0]) >= READINESS_THRESHOLDS["signal_train_rows"],
+                    "details": int(pd.read_csv(signal_split_paths["train"]).shape[0]),
+                },
+                {
+                    "check": "signal_macro_f1",
+                    "passed": float(signal_eval_metrics["macro_f1"]) >= READINESS_THRESHOLDS["signal_eval_macro_f1"],
+                    "details": float(signal_eval_metrics["macro_f1"]),
+                },
+                {
+                    "check": "ner_micro_f1",
+                    "passed": float(ner_eval_metrics["micro_f1"]) >= READINESS_THRESHOLDS["ner_eval_micro_f1"],
+                    "details": float(ner_eval_metrics["micro_f1"]),
+                },
+                {
+                    "check": "opportunity_groups",
+                    "passed": int(len(scores_df)) >= READINESS_THRESHOLDS["opportunity_groups"],
+                    "details": int(len(scores_df)),
+                },
+                {
+                    "check": "all_signal_classes_seen_in_train",
+                    "passed": set(signal_distribution_df.index[signal_distribution_df["train"] > 0]) == set(SIGNAL_LABELS),
+                    "details": int((signal_distribution_df["train"] > 0).sum()),
+                },
+            ]
+
+            failed_checks = [check["check"] for check in readiness_checks if not check["passed"]]
+            readiness_status = "ready" if not failed_checks else "not_ready"
+            readiness_payload = {
+                "status": readiness_status,
+                "failed_checks": failed_checks,
+                "checks": readiness_checks,
+                "thresholds": READINESS_THRESHOLDS,
+                "signal_metrics": signal_eval_metrics,
+                "ner_metrics": ner_eval_metrics,
+                "opportunity_groups": int(len(scores_df)),
+            }
+
+            readiness_path = REPO_ROOT / "logs" / "production_readiness.json"
+            with open(readiness_path, "w", encoding="utf-8") as handle:
+                json.dump(readiness_payload, handle, indent=2)
+
+            display(pd.DataFrame(readiness_checks))
+            display(pd.DataFrame([{"production_status": readiness_status, "failed_checks": ", ".join(failed_checks)}]))
+            print(f"Readiness report written to {readiness_path}")
+            """
+        ),
+        md(
+            """
+            The readiness summary is the production guardrail.
+            If the signal dataset is still too small or the evaluated metrics are still below threshold, the notebook should say so explicitly instead of pretending the pipeline is ready for deployment.
             """
         ),
         code(
@@ -767,6 +1064,9 @@ def build_training_notebook() -> nbf.NotebookNode:
                 {"artifact": "ner_training_metrics", "path": str(REPO_ROOT / "logs" / "ner_training_metrics.json")},
                 {"artifact": "signal_test_metrics_pytorch", "path": str(REPO_ROOT / "logs" / "signal_test_metrics_pytorch.json")},
                 {"artifact": "ner_test_metrics_pytorch", "path": str(REPO_ROOT / "logs" / "ner_test_metrics_pytorch.json")},
+                {"artifact": "opportunity_scores", "path": str(REPO_ROOT / "logs" / "opportunity_scores.csv")},
+                {"artifact": "production_readiness", "path": str(REPO_ROOT / "logs" / "production_readiness.json")},
+                {"artifact": "heatmap", "path": str(REPO_ROOT / "outputs" / "lokasense_heatmap.html")},
             ]
             display(pd.DataFrame(summary_rows))
             """
@@ -789,25 +1089,40 @@ def build_inference_notebook() -> nbf.NotebookNode:
             # LokaSense Inference Notebook
 
             This notebook is the lightweight companion to the training notebook.
-            Train or refresh checkpoints from `training.ipynb`, then use this notebook to run local inference directly from cells.
-            It loads the saved signal and NER checkpoints and runs end-user inference directly from notebook cells.
+            It loads the saved checkpoints, shows the latest readiness status, runs local inference, and resolves extracted entities into usable coordinates where possible.
             """
         ),
         md(
             """
             ## What This Notebook Does
 
-            - Loads the latest local `models/signal_base` checkpoint
-            - Loads the latest local `models/ner_base` checkpoint
-            - Runs signal classification on editable Indonesian example text
-            - Extracts NER spans from the same text so you can quickly inspect location and organization hits
+            - Loads the latest local signal and NER checkpoints
+            - Displays the latest production readiness summary if one exists
+            - Runs signal classification on editable Indonesian inputs
+            - Extracts and resolves location-like entities
+            - Shows the latest scored opportunity groups if the training notebook already generated them
             """
         ),
         code(INFERENCE_SETUP),
         md(
             """
-            The setup cell loads both models into memory and binds them to the active device.
-            If a checkpoint is missing, it will fail early with a clear path so you know which training artifact still needs to be generated.
+            The setup cell fails early if a checkpoint is missing, which keeps the notebook honest about whether the training path has been run.
+            """
+        ),
+        code(
+            """
+            if READINESS_FILE.exists():
+                with open(READINESS_FILE, "r", encoding="utf-8") as handle:
+                    readiness_payload = json.load(handle)
+                display(pd.DataFrame(readiness_payload["checks"]))
+                display(pd.DataFrame([{"production_status": readiness_payload["status"], "failed_checks": ", ".join(readiness_payload.get("failed_checks", []))}]))
+            else:
+                print("No production readiness file found yet. Run training.ipynb first.")
+            """
+        ),
+        md(
+            """
+            This is the fastest way to see whether the latest notebook run actually cleared the production gates.
             """
         ),
         code(
@@ -845,54 +1160,60 @@ def build_inference_notebook() -> nbf.NotebookNode:
         ),
         md(
             """
-            Edit the `inference_inputs` cell if you want to test your own Indonesian text.
-            Keeping `city`, `area_hint`, and `business_hint` nearby also makes it easier to reuse these rows later for downstream scoring or demos.
+            Edit this cell whenever you want to test your own Indonesian text.
+            The city and area hints are optional, but they help location resolution downstream.
             """
         ),
         code(
             """
             signal_predictions = predict_signal(inference_inputs["text"].tolist())
-            display(pd.concat([inference_inputs, signal_predictions.drop(columns=["text"])], axis=1))
+            signal_results = pd.concat([inference_inputs, signal_predictions.drop(columns=["text"])], axis=1)
+            display(signal_results)
             """
         ),
         md(
             """
-            The signal classifier output shows the top prediction and the next two alternatives.
-            That is usually more useful than a single hard label when you are debugging borderline texts like `DEMAND_UNMET` versus `DEMAND_PRESENT`.
+            The signal output exposes the top label plus the next two alternatives so uncertainty stays visible.
             """
         ),
         code(
             """
-            ner_outputs = []
+            resolved_outputs = []
             for _, row in inference_inputs.iterrows():
-                entities = predict_ner_entities(row["text"]).to_dict(orient="records")
-                ner_outputs.append({"text": row["text"], "entities": entities})
+                resolved = resolve_predicted_entities(row["text"], city_hint=row["city"], area_hint=row["area_hint"])
+                resolved_outputs.append(
+                    {
+                        "text": row["text"],
+                        "resolved_entities": resolved.to_dict(orient="records"),
+                    }
+                )
 
-            ner_outputs_df = pd.DataFrame(ner_outputs)
-            display(ner_outputs_df)
+            resolved_outputs_df = pd.DataFrame(resolved_outputs)
+            display(resolved_outputs_df)
             """
         ),
         md(
             """
-            The NER output is deliberately kept simple here: you get back the extracted entities and their labels per text.
-            That makes the notebook easy to use as a local demo surface without needing to run the full spatial aggregation pipeline.
+            The NER output is resolved into city, area, and coordinate hints where the gazetteer can support it.
+            That closes the gap between raw entity extraction and spatial aggregation.
             """
         ),
         code(
             """
-            batch_demo_path = REPO_ROOT / "data" / "social_media" / "tiktok_data.csv"
-            if batch_demo_path.exists():
-                batch_demo = pd.read_csv(batch_demo_path).head(8).copy()
-                batch_demo_predictions = predict_signal(batch_demo["text"].fillna("").astype(str).tolist())
-                display(pd.concat([batch_demo[["text", "city", "area_hint", "business_hint"]], batch_demo_predictions.drop(columns=["text"])], axis=1))
+            latest_scores_path = REPO_ROOT / "logs" / "opportunity_scores.csv"
+            if latest_scores_path.exists():
+                latest_scores_df = pd.read_csv(latest_scores_path)
+                if not latest_scores_df.empty and "opportunity_score" in latest_scores_df.columns:
+                    display(latest_scores_df.sort_values("opportunity_score", ascending=False).head(20))
+                else:
+                    print("Opportunity scoring output exists but is still empty.")
             else:
-                print(f"No demo batch found at {batch_demo_path}")
+                print("No opportunity scoring output found yet. Run training.ipynb first.")
             """
         ),
         md(
             """
-            This optional batch cell gives you a quick sanity check on real scraped text without retraining anything.
-            It is a nice first stop when you want to know whether the saved checkpoints are at least behaving plausibly on the current raw corpus.
+            This last cell gives you the latest scored market view without retraining anything.
             """
         ),
     ]

@@ -28,7 +28,7 @@ def main():
     import torch.nn.utils.prune as prune
     from transformers import AutoModelForTokenClassification
 
-    print("  Applying structured/unstructured PyTorch Pruning (P-KD-Q Pipeline)...")
+    print("  Applying post-training magnitude pruning before ONNX export...")
     pt_model = AutoModelForTokenClassification.from_pretrained(str(MODEL_IN))
     
     # Apply 20% magnitude pruning to all Linear layers
@@ -52,7 +52,7 @@ def main():
 
     print("  Applying INT8 dynamic quantization...")
     quantizer = ORTQuantizer.from_pretrained(ort_model)
-    dqconfig = AutoQuantizationConfig.avx512_vnni(is_static=False, per_channel=True)
+    dqconfig = AutoQuantizationConfig.avx2(is_static=False, per_channel=True)
     quantizer.quantize(save_dir=str(ONNX_OUT), quantization_config=dqconfig)
 
     quant_file = ONNX_OUT / "model_quantized.onnx"
@@ -64,7 +64,7 @@ def main():
         "unquantized_size_mb": round(unquant_size_mb, 1),
         "quantized_size_mb": round(quant_size_mb, 1),
         "compression_ratio": round(unquant_size_mb / max(quant_size_mb, 1), 2),
-        "quantization": "INT8_dynamic_avx512_vnni",
+        "quantization": "INT8_dynamic_avx2",
     }
     with open(LOG_DIR / "ner_onnx_export.json", "w") as f:
         json.dump(metrics, f, indent=2)

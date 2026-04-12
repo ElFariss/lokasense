@@ -64,8 +64,58 @@ DEFAULT_FIELDNAMES = [
     "views",
     "hashtags",
     "query",
+    "query_intent",
     "scrape_mode",
     "collected_at",
+]
+
+COMPLAINT_MARKERS = [
+    "mahal banget",
+    "terlalu mahal",
+    "gak worth",
+    "ga worth",
+    "kurang enak",
+    "ga sesuai harga",
+    "gak sesuai harga",
+    "tidak sesuai harga",
+    "pelayanan lama",
+    "pelayanannya lama",
+    "pelayanannya buruk",
+    "gak rekomen",
+    "ga rekomen",
+    "zonk",
+    "kecewa",
+    "mengecewakan",
+    "porsi kecil",
+    "pelit",
+    "kapok",
+    "tidak ramah",
+    "ga ramah",
+    "gak ramah",
+    "jutek",
+    "antri lama",
+    "antre lama",
+    "nunggu lama",
+    "kemanisan",
+    "keasinan",
+    "alot",
+    "amis",
+    "b aja",
+    "biasa aja",
+]
+POSITIVE_MARKERS = [
+    "enak banget",
+    "murah meriah",
+    "wajib coba",
+    "recommended",
+    "rekomen",
+    "worth it",
+    "mantap",
+    "puas",
+    "satset",
+    "pelayanannya cepat",
+    "pelayanannya satset",
+    "ramah",
 ]
 
 
@@ -100,6 +150,43 @@ def gentle_scroll(page: "Page") -> None:
         page.wait_for_timeout(600)
         page.mouse.wheel(0, 1800)
     page.wait_for_timeout(900)
+
+
+def complaint_relevance_score(text: str, seed: dict[str, str]) -> int:
+    normalized = normalize_text(text)
+    if not normalized:
+        return 0
+
+    score = 0
+    for marker in COMPLAINT_MARKERS:
+        if marker in normalized:
+            score += 2
+    for marker in POSITIVE_MARKERS:
+        if marker in normalized:
+            score -= 1
+
+    business_hint = normalize_text(seed.get("business_hint", ""))
+    if business_hint and business_hint in normalized:
+        score += 1
+    for place_hint in [seed.get("city", ""), seed.get("area_hint", "")]:
+        normalized_place = normalize_text(place_hint)
+        if normalized_place and normalized_place in normalized:
+            score += 1
+    return score
+
+
+def has_complaint_marker(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(marker in normalized for marker in COMPLAINT_MARKERS)
+
+
+def is_record_relevant(record: dict[str, str], seed: dict[str, str]) -> bool:
+    query_intent = str(seed.get("query_intent", "")).strip().lower()
+    if query_intent != "complaint":
+        return True
+    if not has_complaint_marker(record.get("text", "")):
+        return False
+    return complaint_relevance_score(record.get("text", ""), seed) >= 2
 
 
 def load_platform_cookies(platform: str) -> list[dict]:
@@ -339,6 +426,7 @@ def parse_tiktok_page(page, url: str, seed: dict, scrape_mode: str) -> tuple[dic
         "views": stats.get("playCount", item.get("playCount", "")),
         "hashtags": "|".join(extract_hashtags(raw_text)),
         "query": seed["query"],
+        "query_intent": seed.get("query_intent", ""),
         "scrape_mode": scrape_mode,
         "collected_at": now_iso(),
     }
@@ -394,6 +482,7 @@ def parse_instagram_page(page, url: str, seed: dict, scrape_mode: str) -> tuple[
         "views": "",
         "hashtags": "|".join(extract_hashtags(raw_text)),
         "query": seed["query"],
+        "query_intent": seed.get("query_intent", ""),
         "scrape_mode": scrape_mode,
         "collected_at": now_iso(),
     }
@@ -448,6 +537,7 @@ def parse_x_page(page, url: str, seed: dict, scrape_mode: str) -> tuple[dict | N
         "views": "",
         "hashtags": "|".join(extract_hashtags(raw_text)),
         "query": seed["query"],
+        "query_intent": seed.get("query_intent", ""),
         "scrape_mode": scrape_mode,
         "collected_at": now_iso(),
     }
@@ -542,6 +632,9 @@ def collect_platform(platform: str, seeds: list[dict], args, manifest: dict) -> 
                     platform_manifest["blocked_reasons"].append({"url": url, "reason": blocked_reason})
                 if not record:
                     continue
+                if not is_record_relevant(record, seed):
+                    platform_manifest["blocked_reasons"].append({"url": url, "reason": "filtered_low_relevance_for_query_intent"})
+                    continue
 
                 text_hash = stable_hash(normalize_for_dedupe(record["text"]))
                 if text_hash in seen_text_hashes:
@@ -591,13 +684,15 @@ def maybe_refresh_google_maps(args, manifest: dict) -> None:
         "duplicate_urls": 0,
         "duplicate_texts": 0,
         "blocked_reasons": [],
+        "included_in_bootstrap": bool(args.include_gmaps_cache or args.refresh_gmaps),
+        "billable_refresh_used": bool(args.refresh_gmaps),
     }
     if not args.refresh_gmaps:
         return
 
     from collect_gmaps_reviews import main as collect_gmaps_main
 
-    collect_gmaps_main()
+    collect_gmaps_main(["--confirm-billable"])
     refreshed = len(load_csv_rows(gmaps_file))
     manifest["platforms"]["google_maps"]["parsed_posts"] = refreshed
     manifest["platforms"]["google_maps"]["saved_rows"] = refreshed
@@ -620,13 +715,13 @@ def write_manual_review_samples(signal_rows: list[dict[str, str]], ner_rows: lis
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def rebuild_bootstrap_outputs(manifest: dict) -> None:
-    signal_rows = build_signal_bootstrap_rows()
+def rebuild_bootstrap_outputs(manifest: dict, *, include_google_maps: bool = False) -> None:
+    signal_rows = build_signal_bootstrap_rows(include_google_maps=include_google_maps)
     signal_output = SCRAPED_DIR / "signal_bootstrap.csv"
     write_csv_rows(
         signal_output,
         signal_rows,
-        ["text", "source", "platform", "url", "timestamp", "area_hint", "city", "business_hint", "query", "provenance_split"],
+        ["text", "source", "platform", "url", "timestamp", "area_hint", "city", "business_hint", "query", "query_intent", "provenance_split"],
     )
 
     ner_rows = build_ner_bootstrap_rows(signal_rows)
@@ -655,10 +750,16 @@ def parse_args(argv=None, default_platforms=None):
     parser.add_argument("--dry-run-target", type=int, default=100, help="Stop after this many saved rows in dry-run mode.")
     parser.add_argument("--headless", action="store_true", default=False, help="Run browsers headless.")
     parser.add_argument("--query-delay", type=float, default=1.2, help="Delay in seconds between queries.")
-    parser.add_argument("--refresh-gmaps", action="store_true", help="Refresh Google Maps reviews using the existing API collector.")
+    parser.add_argument("--include-gmaps-cache", action="store_true", help="Merge an existing local Google Maps CSV into the bootstrap artifacts.")
+    parser.add_argument("--refresh-gmaps", action="store_true", help="Refresh Google Maps reviews using the billable API collector. Requires --confirm-billable.")
+    parser.add_argument("--confirm-billable", action="store_true", help="Required to refresh Google Maps reviews because that collector can incur API charges.")
     parser.add_argument("--search-engine-only", action="store_true", help="Skip the browser layer and use Scrapling HTTP fetchers only.")
     args = parser.parse_args(argv)
     args.platforms = args.platforms or list(default_platforms or DEFAULT_PLATFORMS)
+    if args.refresh_gmaps and not args.confirm_billable:
+        parser.error("--refresh-gmaps requires --confirm-billable because the Google Maps collector can incur API charges.")
+    if args.refresh_gmaps:
+        args.include_gmaps_cache = True
     if args.dry_run:
         args.max_queries = min(args.max_queries, 4)
         args.max_per_query = min(args.max_per_query, 6)
@@ -690,7 +791,7 @@ def main(argv=None, default_platforms=None):
     for platform in args.platforms:
         collect_platform(platform, seeds, args, manifest)
 
-    rebuild_bootstrap_outputs(manifest)
+    rebuild_bootstrap_outputs(manifest, include_google_maps=args.include_gmaps_cache)
 
     for platform, details in manifest["platforms"].items():
         for blocked in details.get("blocked_reasons", []):

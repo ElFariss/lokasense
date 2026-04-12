@@ -298,12 +298,12 @@ def discover_urls_via_search(session, platform: str, query: str, max_per_query: 
     return results
 
 
-def discover_tiktok_direct(dynamic_session, query: str, max_per_query: int) -> list[str]:
+def discover_tiktok_direct(dynamic_session, query: str, max_per_query: int, timeout_ms: int = 45000) -> list[str]:
     search_url = f"https://www.tiktok.com/search?q={quote_plus(query)}"
     page = dynamic_session.fetch(
         search_url,
         wait=1000,
-        timeout=45000,
+        timeout=timeout_ms,
         disable_resources=False,
         network_idle=False,
         wait_selector="a",
@@ -339,12 +339,12 @@ def walk_dicts(payload):
             yield from walk_dicts(value)
 
 
-def extract_tiktok_record(dynamic_session, url: str, seed: dict, scrape_mode: str) -> tuple[dict | None, str | None]:
+def extract_tiktok_record(dynamic_session, url: str, seed: dict, scrape_mode: str, timeout_ms: int = 45000) -> tuple[dict | None, str | None]:
     try:
         page = dynamic_session.fetch(
             url,
             wait=1200,
-            timeout=45000,
+            timeout=timeout_ms,
             disable_resources=False,
             network_idle=False,
             wait_selector="body",
@@ -433,9 +433,9 @@ def parse_tiktok_page(page, url: str, seed: dict, scrape_mode: str) -> tuple[dic
     return record, None
 
 
-def extract_instagram_record(dynamic_session, url: str, seed: dict, scrape_mode: str) -> tuple[dict | None, str | None]:
+def extract_instagram_record(dynamic_session, url: str, seed: dict, scrape_mode: str, timeout_ms: int = 45000) -> tuple[dict | None, str | None]:
     try:
-        page = dynamic_session.fetch(url, wait=1000, timeout=45000, wait_selector="body", page_action=gentle_scroll)
+        page = dynamic_session.fetch(url, wait=1000, timeout=timeout_ms, wait_selector="body", page_action=gentle_scroll)
     except Exception as exc:
         return None, f"fetch_error: {exc}"
     return parse_instagram_page(page, url, seed, scrape_mode)
@@ -489,9 +489,9 @@ def parse_instagram_page(page, url: str, seed: dict, scrape_mode: str) -> tuple[
     return record, None
 
 
-def extract_x_record(dynamic_session, url: str, seed: dict, scrape_mode: str) -> tuple[dict | None, str | None]:
+def extract_x_record(dynamic_session, url: str, seed: dict, scrape_mode: str, timeout_ms: int = 45000) -> tuple[dict | None, str | None]:
     try:
-        page = dynamic_session.fetch(url, wait=800, timeout=45000, wait_selector="body", page_action=gentle_scroll)
+        page = dynamic_session.fetch(url, wait=800, timeout=timeout_ms, wait_selector="body", page_action=gentle_scroll)
     except Exception as exc:
         return None, f"fetch_error: {exc}"
     return parse_x_page(page, url, seed, scrape_mode)

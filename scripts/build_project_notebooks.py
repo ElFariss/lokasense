@@ -152,9 +152,11 @@ SIGNAL_LABELS = [
 READINESS_THRESHOLDS = {
     "signal_train_rows": 300,
     "signal_eval_macro_f1": 0.55,
+    "signal_gold_macro_f1": 0.50,
     "ner_eval_micro_f1": 0.75,
     "opportunity_groups": 5,
 }
+MANUAL_SIGNAL_TEST_FILE = REPO_ROOT / "test_data" / "signal_test_manual.csv"
 
 
 def run_command(args, cwd=REPO_ROOT, extra_env=None):
@@ -257,13 +259,20 @@ from sklearn.metrics import classification_report, confusion_matrix
 from transformers import AutoModelForSequenceClassification, AutoModelForTokenClassification, AutoTokenizer
 
 
-def evaluate_signal_checkpoint(model_dir: Path, test_path: Path):
+def evaluate_signal_checkpoint(
+    model_dir: Path,
+    test_path: Path,
+    *,
+    label_column: str = "final_signal",
+    metrics_filename: str = "signal_test_metrics_pytorch.json",
+    confusion_title: str = "Signal Test Confusion Matrix",
+):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
     model = AutoModelForSequenceClassification.from_pretrained(str(model_dir)).to(device)
     model.eval()
 
-    test_df = pd.read_csv(test_path).dropna(subset=["text", "final_signal"]).copy()
+    test_df = pd.read_csv(test_path).dropna(subset=["text", label_column]).copy()
     label2id = {label: idx for idx, label in enumerate(SIGNAL_LABELS)}
     id2label = {idx: label for label, idx in label2id.items()}
 
@@ -281,7 +290,7 @@ def evaluate_signal_checkpoint(model_dir: Path, test_path: Path):
         preds.extend(batch_probs.argmax(axis=-1).tolist())
         probs.extend(batch_probs.tolist())
 
-    true_ids = test_df["final_signal"].map(label2id).tolist()
+    true_ids = test_df[label_column].map(label2id).tolist()
     report = classification_report(
         true_ids,
         preds,
@@ -295,7 +304,7 @@ def evaluate_signal_checkpoint(model_dir: Path, test_path: Path):
     cm = confusion_matrix(true_ids, preds, labels=list(range(len(SIGNAL_LABELS))))
     plt.figure(figsize=(9, 7))
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=SIGNAL_LABELS, yticklabels=SIGNAL_LABELS)
-    plt.title("Signal Test Confusion Matrix")
+    plt.title(confusion_title)
     plt.xlabel("Predicted")
     plt.ylabel("True")
     plt.tight_layout()
@@ -314,17 +323,30 @@ def evaluate_signal_checkpoint(model_dir: Path, test_path: Path):
         )
     preview_df = pd.DataFrame(preview_rows)
 
-    metrics_path = REPO_ROOT / "logs" / "signal_test_metrics_pytorch.json"
+    metrics_path = REPO_ROOT / "logs" / metrics_filename
     metrics_payload = {
         "macro_f1": float(report["macro avg"]["f1-score"]),
         "weighted_f1": float(report["weighted avg"]["f1-score"]),
         "accuracy": float(report["accuracy"]),
         "samples": int(len(test_df)),
+        "label_column": label_column,
     }
     with open(metrics_path, "w", encoding="utf-8") as handle:
         json.dump(metrics_payload, handle, indent=2)
 
     return report_df, preview_df, metrics_payload
+
+
+def load_completed_gold_signal_set(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    gold_df = pd.read_csv(path)
+    if "gold_label" not in gold_df.columns:
+        return pd.DataFrame()
+    gold_df = gold_df.dropna(subset=["text", "gold_label"]).copy()
+    gold_df["gold_label"] = gold_df["gold_label"].astype(str).str.strip()
+    gold_df = gold_df[gold_df["gold_label"].isin(SIGNAL_LABELS)].copy()
+    return gold_df
 
 
 def predict_signal_dataframe(model_dir: Path, df: pd.DataFrame, text_column: str = "text") -> pd.DataFrame:
@@ -938,6 +960,33 @@ def build_training_notebook() -> nbf.NotebookNode:
             This report is the honest checkpoint that should drive README claims, not any earlier experiment that used a different data regime.
             """
         ),
+        md(
+            """
+            If a manually reviewed signal gold set exists, evaluate it separately here.
+            That keeps the notebook honest about the difference between a weak-label diagnostic split and the production gate.
+            """
+        ),
+        code(
+            """
+            signal_gold_metrics = None
+            gold_signal_df = load_completed_gold_signal_set(MANUAL_SIGNAL_TEST_FILE)
+            if gold_signal_df.empty:
+                print(f"No completed manual gold signal set found at {MANUAL_SIGNAL_TEST_FILE}")
+            else:
+                gold_signal_path = REPO_ROOT / "test_data" / "signal_test_manual_completed.csv"
+                gold_signal_df.to_csv(gold_signal_path, index=False)
+                gold_report_df, gold_preview_df, signal_gold_metrics = evaluate_signal_checkpoint(
+                    REPO_ROOT / "models" / "signal_base",
+                    gold_signal_path,
+                    label_column="gold_label",
+                    metrics_filename="signal_test_metrics_gold.json",
+                    confusion_title="Signal Gold Test Confusion Matrix",
+                )
+                display(gold_report_df)
+                display(gold_preview_df)
+                display(pd.DataFrame([signal_gold_metrics]))
+            """
+        ),
         code(
             """
             if torch.cuda.is_available():
@@ -1010,6 +1059,16 @@ def build_training_notebook() -> nbf.NotebookNode:
                     "details": float(signal_eval_metrics["macro_f1"]),
                 },
                 {
+                    "check": "signal_gold_set_present",
+                    "passed": signal_gold_metrics is not None,
+                    "details": int(signal_gold_metrics["samples"]) if signal_gold_metrics else 0,
+                },
+                {
+                    "check": "signal_gold_macro_f1",
+                    "passed": signal_gold_metrics is not None and float(signal_gold_metrics["macro_f1"]) >= READINESS_THRESHOLDS["signal_gold_macro_f1"],
+                    "details": float(signal_gold_metrics["macro_f1"]) if signal_gold_metrics else 0.0,
+                },
+                {
                     "check": "ner_micro_f1",
                     "passed": float(ner_eval_metrics["micro_f1"]) >= READINESS_THRESHOLDS["ner_eval_micro_f1"],
                     "details": float(ner_eval_metrics["micro_f1"]),
@@ -1034,6 +1093,7 @@ def build_training_notebook() -> nbf.NotebookNode:
                 "checks": readiness_checks,
                 "thresholds": READINESS_THRESHOLDS,
                 "signal_metrics": signal_eval_metrics,
+                "signal_gold_metrics": signal_gold_metrics,
                 "ner_metrics": ner_eval_metrics,
                 "opportunity_groups": int(len(scores_df)),
             }
@@ -1063,6 +1123,7 @@ def build_training_notebook() -> nbf.NotebookNode:
                 {"artifact": "signal_training_metrics", "path": str(REPO_ROOT / "logs" / "signal_training_metrics.json")},
                 {"artifact": "ner_training_metrics", "path": str(REPO_ROOT / "logs" / "ner_training_metrics.json")},
                 {"artifact": "signal_test_metrics_pytorch", "path": str(REPO_ROOT / "logs" / "signal_test_metrics_pytorch.json")},
+                {"artifact": "signal_test_metrics_gold", "path": str(REPO_ROOT / "logs" / "signal_test_metrics_gold.json")},
                 {"artifact": "ner_test_metrics_pytorch", "path": str(REPO_ROOT / "logs" / "ner_test_metrics_pytorch.json")},
                 {"artifact": "opportunity_scores", "path": str(REPO_ROOT / "logs" / "opportunity_scores.csv")},
                 {"artifact": "production_readiness", "path": str(REPO_ROOT / "logs" / "production_readiness.json")},

@@ -19,7 +19,7 @@ LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def explain_single(predictor, text, num_features=3, num_samples=100):
+def explain_single(predictor, text, num_features=3, num_samples=500):
     """Generate LIME explanation for a single text (Track C-2 compliant)."""
     probs = predictor.predict_proba([text])[0]
     pred_idx = int(np.argmax(probs))

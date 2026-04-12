@@ -44,7 +44,7 @@ def compute_decay_weights(group: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
         decay = pd.Series(np.ones(len(group)), index=group.index, dtype=float)
         return age_days, decay
 
-    now = pd.Timestamp.utcnow()
+    now = pd.Timestamp.now(tz="UTC")
     age_days = ((now - timestamps).dt.total_seconds() / 86400.0).clip(lower=0).fillna(0.0)
     decay = np.exp(-DECAY_LAMBDA * age_days)
     return age_days, pd.Series(decay, index=group.index, dtype=float)

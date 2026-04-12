@@ -15,8 +15,16 @@ OUTPUT_DIR = BASE_DIR / "outputs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def create_marker_map(scores_df):
+STATUS_LABELS_ID = {
+    "Strong Opportunity": "Peluang Tinggi",
+    "Moderate Opportunity": "Peluang Sedang",
+    "Saturated / Risky": "Jenuh / Berisiko",
+}
+
+
+def create_marker_map(scores_df, lime_data: dict | None = None):
     """Create a simple marker-based map (no GeoJSON required)."""
+    lime_data = lime_data or {}
     # Load gazetteer for coordinates
     gaz_dir = DATA_DIR / "geospatial" / "Wilayah-Administratif-Indonesia" / "csv"
     gaz_files = list(gaz_dir.glob("*.csv"))
@@ -55,16 +63,25 @@ def create_marker_map(scores_df):
         color = row.get("color", "yellow")
         kec = row.get("kecamatan", "N/A")
         biz = row.get("business_type", "N/A")
-        label = row.get("label", "")
+        label = STATUS_LABELS_ID.get(str(row.get("label", "")), str(row.get("label", "")))
+        lime_rows = lime_data.get(str(kec), [])[:3]
+        lime_section = ""
+        if lime_rows:
+            lime_lines = "<br>".join(
+                f"{'+' if float(token.get('weight', 0.0)) > 0 else '-'} {token.get('token', '')}: {float(token.get('weight', 0.0)):+.3f}"
+                for token in lime_rows
+            )
+            lime_section = f"<br>Top sinyal:<br>{lime_lines}"
 
         popup_html = f"""
         <b>{kec}, {city}</b><br>
-        Business: {biz}<br>
-        Score: <b>{score:.2f}</b><br>
+        Bisnis: {biz}<br>
+        Skor: <b>{score:.2f}</b><br>
         Status: <span style='color:{color_map.get(color, "#999")}'><b>{label}</b></span><br>
-        Signals: {row.get('total_signals', 0)}<br>
-        Avg age: {row.get('avg_age_days', 0)} days<br>
-        Location source: {row.get('resolution_source', 'fallback')}
+        Total sinyal: {row.get('total_signals', 0)}<br>
+        Rata-rata usia sinyal: {row.get('avg_age_days', 0)} hari<br>
+        Sumber lokasi: {row.get('resolution_source', 'fallback')}
+        {lime_section}
         """
 
         folium.CircleMarker(
@@ -82,10 +99,10 @@ def create_marker_map(scores_df):
     legend_html = '''
     <div style="position:fixed; bottom:50px; left:50px; z-index:1000; 
          background:white; padding:10px; border-radius:5px; box-shadow: 0 0 5px rgba(0,0,0,0.3);">
-    <b>LokaSense — Opportunity Map</b><br>
-    <span style="color:#2ecc71">●</span> Strong Opportunity (≥0.65)<br>
-    <span style="color:#f39c12">●</span> Moderate (0.40-0.65)<br>
-    <span style="color:#e74c3c">●</span> Saturated/Risky (<0.40)<br>
+    <b>LokaSense — Peta Peluang</b><br>
+    <span style="color:#2ecc71">●</span> Peluang Tinggi (≥0.65)<br>
+    <span style="color:#f39c12">●</span> Peluang Sedang (0.40-0.65)<br>
+    <span style="color:#e74c3c">●</span> Jenuh/Berisiko (&lt;0.40)<br>
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
